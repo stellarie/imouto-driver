@@ -1,12 +1,12 @@
-import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { loadRepoEnv } from "../src/env.js";
 import { DeepSeekClient } from "../src/llm/deepseek.js";
 import { Driver } from "../src/runtime/driver.js";
 import { formatMail, ORCHESTRATOR } from "../src/runtime/mailbox.js";
 
 // Live end-to-end run: one root imouto, one child, mail back to the orchestrator.
 const root = resolve(import.meta.dirname, "..");
-if (existsSync(resolve(root, ".env"))) process.loadEnvFile(resolve(root, ".env"));
+loadRepoEnv(root);
 const apiKey = process.env.DEEPSEEK_API_KEY;
 if (!apiKey) {
   console.error("DEEPSEEK_API_KEY is not set.");

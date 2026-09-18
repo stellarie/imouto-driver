@@ -1,11 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { loadRepoEnv } from "../src/env.js";
 import { DeepSeekClient } from "../src/llm/deepseek.js";
 import type { ChatMessage, LLMToolSchema } from "../src/llm/types.js";
 
 // Bare two-round tool loop: proves reasoning_content passback live.
 const root = resolve(import.meta.dirname, "..");
-if (existsSync(resolve(root, ".env"))) process.loadEnvFile(resolve(root, ".env"));
+loadRepoEnv(root);
 const apiKey = process.env.DEEPSEEK_API_KEY;
 if (!apiKey) {
   console.error("DEEPSEEK_API_KEY is not set.");

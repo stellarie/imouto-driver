@@ -1,10 +1,10 @@
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { argv, cwd, env } from "node:process";
 import { pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { loadRepoEnv } from "./env.js";
 import { DeepSeekClient } from "./llm/deepseek.js";
 import { MockLLMClient } from "./llm/mock.js";
 import type { LLMClient } from "./llm/types.js";
@@ -161,8 +161,7 @@ export function createMcpServer(driver: Driver, info: McpInfo): McpServer {
 // stdio entrypoint: launched by an MCP client such as Claude Code.
 const entry = argv[1];
 if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
-  const envFile = join(import.meta.dirname, "..", ".env");
-  if (existsSync(envFile)) process.loadEnvFile(envFile);
+  loadRepoEnv(join(import.meta.dirname, ".."));
   const key = env.DEEPSEEK_API_KEY;
   const llm: LLMClient = key ? new DeepSeekClient({ apiKey: key }) : new MockLLMClient();
   const model = llm instanceof DeepSeekClient ? llm.model : "mock";

@@ -25,6 +25,9 @@ Environment, from the shell or a `.env` file in the repo root:
 | `DEEPSEEK_MODEL` | Model id. Default `deepseek-flash`. |
 | `IMOUTO_ROOT` | Project directory. Default: the current directory. |
 
+In the repo `.env`, `DEEPSEEK_API_KEY` and `DEEPSEEK_MODEL` override the shell environment.
+Other `.env` values only fill unset variables, so an MCP client's `IMOUTO_ROOT` still wins.
+
 ## Use from Claude Code
 
 ```sh
