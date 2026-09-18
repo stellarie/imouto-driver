@@ -321,6 +321,13 @@ describe("status, root, and images", () => {
     });
   });
 
+  it("rejects a root that is relative or missing", () => {
+    const llm = new RoutedMockLLMClient({});
+    expect(() => new Driver({ root: "C:UsersStellachibipop", llm })).toThrow("root must be an absolute path");
+    expect(() => new Driver({ root: join(root, "nope"), llm })).toThrow("root not found");
+    expect(() => mk(llm).setRoot("relative/dir")).toThrow("root must be an absolute path");
+  });
+
   it("refuses setRoot while running and reloads records otherwise", async () => {
     const llm = new RoutedMockLLMClient({ "imo-1": [final("x")] }, 40);
     const d = mk(llm);

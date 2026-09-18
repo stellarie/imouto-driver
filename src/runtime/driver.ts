@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { LLMClient } from "../llm/types.js";
 import { resolveInJail } from "../tools/pathjail.js";
 import { defaultRegistry } from "../tools/index.js";
@@ -92,7 +92,6 @@ export class Driver implements DriverApi {
 
   setRoot(path: string): void {
     if (this.active.size > 0) throw new Error("imoutos running");
-    if (!existsSync(path)) throw new Error(`path not found: ${path}`);
     this.load(path);
   }
 
@@ -211,6 +210,9 @@ export class Driver implements DriverApi {
   }
 
   private load(root: string): void {
+    // "C:foo" is drive-relative on Windows; a mangled path must not become a silent new root.
+    if (!isAbsolute(root)) throw new Error(`root must be an absolute path: ${root}`);
+    if (!existsSync(root) || !statSync(root).isDirectory()) throw new Error(`root not found: ${root}`);
     const stateDir = join(root, ".imouto");
     this.rootDir = root;
     this.events = new EventLog(stateDir);
