@@ -38,7 +38,7 @@ async function until(cond: () => boolean, ms = 3_000): Promise<void> {
 }
 
 function mk(llm: LLMClient, opts: Partial<DriverOptions> = {}): Driver {
-  return new Driver({ root, llm, memoryGlobalDir: join(root, "global-memory"), skillsGlobalDir: join(root, "global-skills"), ...opts });
+  return new Driver({ root, llm, memoryGlobalDir: join(root, "global-memory"), skillsGlobalDir: join(root, "global-skills"), guideGlobalPath: join(root, "global-guide.md"), ...opts });
 }
 const state = (d: Driver, id: string) => d.status().find((s) => s.id === id)?.state;
 const saved = (id: string) =>
@@ -325,8 +325,8 @@ describe("status, root, and images", () => {
     const llm = new RoutedMockLLMClient({});
     const g = join(root, "global-memory");
     const gs = join(root, "global-skills");
-    expect(() => new Driver({ root: "C:UsersStellachibipop", llm, memoryGlobalDir: g, skillsGlobalDir: gs })).toThrow("root must be an absolute path");
-    expect(() => new Driver({ root: join(root, "nope"), llm, memoryGlobalDir: g, skillsGlobalDir: gs })).toThrow("root not found");
+    expect(() => new Driver({ root: "C:UsersStellachibipop", llm, memoryGlobalDir: g, skillsGlobalDir: gs, guideGlobalPath: join(root, "global-guide.md") })).toThrow("root must be an absolute path");
+    expect(() => new Driver({ root: join(root, "nope"), llm, memoryGlobalDir: g, skillsGlobalDir: gs, guideGlobalPath: join(root, "global-guide.md") })).toThrow("root not found");
     expect(() => mk(llm).setRoot("relative/dir")).toThrow("root must be an absolute path");
   });
 

@@ -13,7 +13,7 @@ import { Driver } from "./runtime/driver.js";
 import { formatMail, ORCHESTRATOR } from "./runtime/mailbox.js";
 import { runGatesText } from "./tools/gates-tool.js";
 import { formatHits, readMemory } from "./tools/memory-tools.js";
-import { formatSkill } from "./tools/skill-tools.js";
+import { readSkill } from "./tools/skill-tools.js";
 
 const MAX_WAIT_SEC = 120;
 
@@ -262,8 +262,11 @@ export function createMcpServer(driver: Driver, info: McpInfo): McpServer {
 
   server.registerTool(
     "skill_read",
-    { description: "Read a skill's full procedure.", inputSchema: { name: z.string() } },
-    guard(({ name }) => text(formatSkill(driver.skills.find(name)))),
+    {
+      description: "Read a skill, or one page of it with file.",
+      inputSchema: { name: z.string(), file: z.string().optional() },
+    },
+    guard(({ name, file }) => text(readSkill(driver.skills, name, file))),
   );
 
   server.registerTool(

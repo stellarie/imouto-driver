@@ -1,3 +1,4 @@
+import type { Skills } from "../skills/skills.js";
 import type { Skill } from "../skills/store.js";
 import type { Tool, ToolResult } from "./types.js";
 
@@ -5,8 +6,15 @@ function fail(e: unknown): ToolResult {
   return { ok: false, output: "", error: e instanceof Error ? e.message : String(e) };
 }
 
-export function formatSkill(s: Skill): string {
-  return `${s.name} [${s.scope}] — ${s.description}\n\n${s.body}`;
+export function formatSkill(s: Skill, files: string[] = []): string {
+  const pages = files.length ? `\n\nFiles (read with skill_read name + file):\n${files.map((f) => `- ${f}`).join("\n")}` : "";
+  return `${s.name} [${s.scope}] — ${s.description}\n\n${s.body}${pages}`;
+}
+
+/** SKILL.md with its page list, or one page when `file` is given. */
+export function readSkill(skills: Skills, name: string, file?: string): string {
+  if (file) return skills.readFile(name, file);
+  return formatSkill(skills.find(name), skills.files(name));
 }
 
 export const skillListTool: Tool = {
@@ -24,11 +32,20 @@ export const skillListTool: Tool = {
 
 export const skillReadTool: Tool = {
   name: "skill_read",
-  description: "Read a skill's full procedure before doing a task it matches.",
-  parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+  description:
+    "Read a skill before doing a task it matches. Long skills list extra pages under Files; read one with the file argument.",
+  parameters: {
+    type: "object",
+    properties: {
+      name: { type: "string" },
+      file: { type: "string", description: "A page from the skill's Files list, e.g. 'Comments.md'." },
+    },
+    required: ["name"],
+  },
   async execute(args, ctx) {
     try {
-      return { ok: true, output: formatSkill(ctx.skills.find(String(args.name ?? ""))) };
+      const file = typeof args.file === "string" && args.file ? args.file : undefined;
+      return { ok: true, output: readSkill(ctx.skills, String(args.name ?? ""), file) };
     } catch (e) {
       return fail(e);
     }

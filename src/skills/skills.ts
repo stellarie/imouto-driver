@@ -35,7 +35,19 @@ export class Skills {
 
   /** Project first, then global. */
   find(name: string): Skill {
-    if (this.project.has(name)) return this.project.read(name);
-    return this.global.read(name);
+    return this.owner(name).read(name);
+  }
+
+  /** Pages of the skill that find() returns. */
+  files(name: string): string[] {
+    return this.owner(name).files(name);
+  }
+
+  readFile(name: string, file: string): string {
+    return this.owner(name).readFile(name, file);
+  }
+
+  private owner(name: string): SkillStore {
+    return this.project.has(name) ? this.project : this.global;
   }
 }

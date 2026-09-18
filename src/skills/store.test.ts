@@ -80,6 +80,36 @@ describe("SkillStore promotion", () => {
   });
 });
 
+describe("skill pages", () => {
+  function withPages(): Skills {
+    const sk = new Skills(join(dir, "g"), join(dir, "p"));
+    const root = join(dir, "g", "rust-guidelines");
+    mkdirSync(join(root, "extra"), { recursive: true });
+    mkdirSync(join(root, "versions"), { recursive: true });
+    writeFileSync(join(root, "SKILL.md"), "---\nname: rust-guidelines\ndescription: Rust rules\n---\n\nRead Comments.md.\n");
+    writeFileSync(join(root, "Comments.md"), "Comments are 30 chars max.");
+    writeFileSync(join(root, "extra", "Deep.md"), "deep page");
+    writeFileSync(join(root, "notes.txt"), "not markdown");
+    writeFileSync(join(root, "versions", "old.md"), "old");
+    return sk;
+  }
+
+  it("lists pages, excluding SKILL.md, versions, and non-markdown files", () => {
+    expect(withPages().files("rust-guidelines")).toEqual(["Comments.md", "extra/Deep.md"]);
+  });
+
+  it("reads a page and rejects escapes, non-markdown, and versions", () => {
+    const sk = withPages();
+    expect(sk.readFile("rust-guidelines", "Comments.md")).toBe("Comments are 30 chars max.");
+    expect(sk.readFile("rust-guidelines", "extra/Deep.md")).toBe("deep page");
+    expect(() => sk.readFile("rust-guidelines", "../../p/x.md")).toThrow("escapes jail");
+    expect(() => sk.readFile("rust-guidelines", join(dir, "abs.md"))).toThrow();
+    expect(() => sk.readFile("rust-guidelines", "notes.txt")).toThrow("not a markdown page");
+    expect(() => sk.readFile("rust-guidelines", "versions/old.md")).toThrow("not a page");
+    expect(() => sk.readFile("rust-guidelines", "Missing.md")).toThrow("unknown page");
+  });
+});
+
 describe("Skills facade", () => {
   it("merges scopes with the project skill winning", () => {
     const sk = new Skills(join(dir, "g"), join(dir, "p"));
