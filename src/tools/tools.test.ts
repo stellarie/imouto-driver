@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Memory } from "../memory/memory.js";
 import type { DriverApi } from "../runtime/driver.js";
 import type { SearchIndex } from "../search/index.js";
+import type { Skills } from "../skills/skills.js";
 import { fsTool } from "./fs-tool.js";
 import { makeGatesTool } from "./gates-tool.js";
 import { grepTool } from "./grep-tool.js";
@@ -25,6 +26,7 @@ beforeEach(() => {
     driver: {} as DriverApi,
     memory: {} as Memory,
     search: {} as SearchIndex,
+    skills: {} as Skills,
   };
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));

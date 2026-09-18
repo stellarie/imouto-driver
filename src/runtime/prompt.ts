@@ -7,14 +7,18 @@ Your final reply without tool calls goes to your parent. Make it complete and se
 Use spawn only for independent sub-work. Give each child a clear goal and a budget.
 Use send and wait to ask your parent or peers for missing facts. Do not guess.
 Report what you observed, not what you expect.
-Use memory_recall before researching; use memory_note to record verified findings with evidence.`;
+Use memory_recall before researching; use memory_note to record verified findings with evidence.
+When a skill matches your task, skill_read it and follow it. Draft a skill with skill_draft after a procedure works.`;
 
-export function buildSystemPrompt(rec: ImoutoRecord, memoryIndex: string): string {
+export function buildSystemPrompt(rec: ImoutoRecord, memoryIndex: string, skillIndex: string): string {
   return [
     BASE,
     "",
     "Memory index (facts; use memory_read for details):",
     memoryIndex,
+    "",
+    "Skills index (use skill_read before a matching task):",
+    skillIndex,
     "",
     `id: ${rec.id}`,
     `parent: ${rec.parent}`,

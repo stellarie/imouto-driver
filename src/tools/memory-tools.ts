@@ -2,7 +2,7 @@ import { MEMORY_KINDS, type Candidate, type Fact, type MemoryKind, type MemorySc
 import type { SearchHit, SearchKind } from "../search/index.js";
 import type { Tool, ToolContext, ToolResult } from "./types.js";
 
-const KINDS: readonly SearchKind[] = ["memory", "episode", "mail", "doc"];
+const KINDS: readonly SearchKind[] = ["memory", "episode", "mail", "doc", "skill"];
 
 function fail(e: unknown): ToolResult {
   return { ok: false, output: "", error: e instanceof Error ? e.message : String(e) };

@@ -5,6 +5,7 @@ import { sendTool, spawnTool, waitTool } from "./imouto-tools.js";
 import { memoryNoteTool, memoryReadTool, memoryRecallTool, searchTool } from "./memory-tools.js";
 import { ToolRegistry } from "./registry.js";
 import { shellTool } from "./shell-tool.js";
+import { skillDraftTool, skillListTool, skillReadTool } from "./skill-tools.js";
 import { viewImageTool } from "./view-image-tool.js";
 import { webTool } from "./web-tool.js";
 
@@ -22,5 +23,8 @@ export function defaultRegistry(): ToolRegistry {
     .register(searchTool)
     .register(memoryRecallTool)
     .register(memoryReadTool)
-    .register(memoryNoteTool);
+    .register(memoryNoteTool)
+    .register(skillListTool)
+    .register(skillReadTool)
+    .register(skillDraftTool);
 }

@@ -16,7 +16,7 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 let driver: Driver;
 async function connect(llm: RoutedMockLLMClient): Promise<Client> {
-  driver = new Driver({ root, llm, memoryGlobalDir: join(root, "global-memory") });
+  driver = new Driver({ root, llm, memoryGlobalDir: join(root, "global-memory"), skillsGlobalDir: join(root, "global-skills") });
   const server = createMcpServer(driver, { model: "mock", live: false });
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
   await server.connect(serverT);
@@ -35,6 +35,7 @@ describe("MCP server", () => {
       [
         "health", "set_root", "spawn", "send", "wait", "status", "tuck", "wake", "run_gates",
         "search", "memory_read", "memory_candidates", "memory_promote", "memory_reject", "memory_forget", "memory_consolidate",
+        "skill_list", "skill_read", "skill_drafts", "skill_promote", "skill_reject",
       ].sort(),
     );
   });
@@ -83,5 +84,27 @@ describe("MCP server", () => {
     expect(report).toContain("Stale candidates:\n(none)");
     const hits = firstText(await client.callTool({ name: "search", arguments: { query: "first fact", kinds: ["memory"] } }));
     expect(hits).toContain("[memory] project:one");
+  });
+
+  it("reviews and promotes a skill draft, which the next imouto sees", async () => {
+    const llm = new RoutedMockLLMClient({ "imo-1": [{ content: "ok", toolCalls: [] }] });
+    const client = await connect(llm);
+    driver.skills.project.draft({
+      name: "list-scripts",
+      description: "List package scripts",
+      body: "1. Read package.json.",
+      evidence: { episode: "imo-9-a1", imouto: "imo-9", text: "worked", executed: false },
+    });
+    const drafts = firstText(await client.callTool({ name: "skill_drafts", arguments: {} }));
+    expect(drafts).toContain("project d-1 list-scripts — List package scripts");
+    expect(drafts).toContain("1. Read package.json.");
+    const promoted = await client.callTool({ name: "skill_promote", arguments: { id: "d-1", scope: "project" } });
+    expect(firstText(promoted)).toBe("promoted d-1 -> list-scripts");
+    expect(firstText(await client.callTool({ name: "skill_list", arguments: {} }))).toBe(
+      "- list-scripts [project] — List package scripts",
+    );
+    await client.callTool({ name: "spawn", arguments: { goal: "g", brief: "b" } });
+    await client.callTool({ name: "wait", arguments: { timeoutSec: 2 } });
+    expect(llm.calls["imo-1"]?.[0]?.system).toContain("- list-scripts [project] — List package scripts");
   });
 });

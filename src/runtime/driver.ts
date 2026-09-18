@@ -5,6 +5,8 @@ import { consolidate, formatReport } from "../memory/consolidate.js";
 import { defaultGlobalMemoryDir, Memory } from "../memory/memory.js";
 import type { MemoryScope } from "../memory/types.js";
 import { SearchIndex } from "../search/index.js";
+import { defaultGlobalSkillsDir, Skills } from "../skills/skills.js";
+import type { SkillScope } from "../skills/store.js";
 import { resolveInJail } from "../tools/pathjail.js";
 import { defaultRegistry } from "../tools/index.js";
 import type { ToolRegistry } from "../tools/registry.js";
@@ -28,6 +30,8 @@ export interface DriverOptions {
   defaultRootBudget?: number;
   /** Global memory directory. Default: IMOUTO_MEMORY_DIR or ~/.imouto/memory. */
   memoryGlobalDir?: string;
+  /** Global skills directory. Default: IMOUTO_SKILLS_DIR or ~/.imouto/skills. */
+  skillsGlobalDir?: string;
 }
 
 export interface SpawnInput {
@@ -70,6 +74,8 @@ export class Driver implements DriverApi {
   private readonly semaphore: Semaphore;
   private readonly registry: ToolRegistry;
   private readonly memoryGlobalDir: string;
+  private readonly skillsGlobalDir: string;
+  private skillStore!: Skills;
   private stateDir!: string;
   private memoryStore!: Memory;
   private searchIndex!: SearchIndex;
@@ -91,6 +97,7 @@ export class Driver implements DriverApi {
     this.semaphore = new Semaphore(this.maxConcurrentCalls);
     this.registry = opts.registry ?? defaultRegistry();
     this.memoryGlobalDir = opts.memoryGlobalDir ?? defaultGlobalMemoryDir();
+    this.skillsGlobalDir = opts.skillsGlobalDir ?? defaultGlobalSkillsDir();
     this.load(opts.root);
   }
 
@@ -108,6 +115,10 @@ export class Driver implements DriverApi {
 
   get search(): SearchIndex {
     return this.searchIndex;
+  }
+
+  get skills(): Skills {
+    return this.skillStore;
   }
 
   /** Prune old episodes and report what needs an orchestrator decision. */
@@ -253,6 +264,7 @@ export class Driver implements DriverApi {
     this.memoryStore = new Memory(this.memoryGlobalDir, join(stateDir, "memory"), (what, scope, key, removed) =>
       this.indexMemory(what, scope, key, removed),
     );
+    this.skillStore = new Skills(this.skillsGlobalDir, join(stateDir, "skills"), (scope, name) => this.indexSkill(scope, name));
     this.searchIndex = new SearchIndex(join(stateDir, "search.db"), root);
     this.rebuildSearch();
     this.mailbox.onDeliver((mail) => {
@@ -268,6 +280,10 @@ export class Driver implements DriverApi {
       idx.clear("memory");
       idx.clear("episode");
       idx.clear("mail");
+      idx.clear("skill");
+      for (const scope of ["global", "project"] as const) {
+        for (const sk of this.skillStore.store(scope).list()) this.indexSkill(scope, sk.name);
+      }
       for (const scope of ["global", "project"] as const) {
         const store = this.memoryStore.store(scope);
         for (const c of store.candidates()) this.indexMemory("candidate", scope, c.id, false);
@@ -283,6 +299,11 @@ export class Driver implements DriverApi {
         }
       }
     });
+  }
+
+  private indexSkill(scope: SkillScope, name: string): void {
+    const sk = this.skillStore.store(scope).read(name);
+    this.searchIndex.upsert("skill", `${scope}:${name}`, `${sk.name}: ${sk.description}`, sk.body);
   }
 
   private indexMemory(what: "candidate" | "fact", scope: MemoryScope, key: string, removed: boolean): void {
@@ -393,6 +414,7 @@ export class Driver implements DriverApi {
       driver: this,
       memory: this.memoryStore,
       search: this.searchIndex,
+      skills: this.skillStore,
       save: (r) => this.store.save(r),
       setState: (r, to, reason) => this.setState(r, to, reason),
       tuckRequested: (id) => this.tuckFlags.has(id),

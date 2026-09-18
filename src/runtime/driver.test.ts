@@ -38,7 +38,7 @@ async function until(cond: () => boolean, ms = 3_000): Promise<void> {
 }
 
 function mk(llm: LLMClient, opts: Partial<DriverOptions> = {}): Driver {
-  return new Driver({ root, llm, memoryGlobalDir: join(root, "global-memory"), ...opts });
+  return new Driver({ root, llm, memoryGlobalDir: join(root, "global-memory"), skillsGlobalDir: join(root, "global-skills"), ...opts });
 }
 const state = (d: Driver, id: string) => d.status().find((s) => s.id === id)?.state;
 const saved = (id: string) =>
@@ -324,8 +324,9 @@ describe("status, root, and images", () => {
   it("rejects a root that is relative or missing", () => {
     const llm = new RoutedMockLLMClient({});
     const g = join(root, "global-memory");
-    expect(() => new Driver({ root: "C:UsersStellachibipop", llm, memoryGlobalDir: g })).toThrow("root must be an absolute path");
-    expect(() => new Driver({ root: join(root, "nope"), llm, memoryGlobalDir: g })).toThrow("root not found");
+    const gs = join(root, "global-skills");
+    expect(() => new Driver({ root: "C:UsersStellachibipop", llm, memoryGlobalDir: g, skillsGlobalDir: gs })).toThrow("root must be an absolute path");
+    expect(() => new Driver({ root: join(root, "nope"), llm, memoryGlobalDir: g, skillsGlobalDir: gs })).toThrow("root not found");
     expect(() => mk(llm).setRoot("relative/dir")).toThrow("root must be an absolute path");
   });
 
@@ -460,5 +461,47 @@ describe("episodes and memory wiring", () => {
     await d.wait("orchestrator", 2_000);
     const names = (llm.calls["imo-1"]?.[0]?.tools ?? []).map((t) => t.name);
     expect(names).toEqual(expect.arrayContaining(["search", "memory_recall", "memory_read", "memory_note"]));
+  });
+});
+
+describe("skills wiring", () => {
+  it("drafts through the tool with the episode, and registers the skill tools", async () => {
+    const llm = new RoutedMockLLMClient({
+      "imo-1": [
+        tc("skill_draft", { name: "list-scripts", description: "List scripts", body: "1. Read package.json.", evidence: "worked here" }),
+        final("drafted"),
+      ],
+    });
+    const d = mk(llm);
+    d.spawn(spawnArgs());
+    await d.wait("orchestrator", 2_000);
+    const tool = llm.calls["imo-1"]?.[1]?.messages.find((m) => m.role === "tool");
+    expect(tool?.content).toBe("drafted d-1");
+    expect(d.skills.project.drafts()[0]?.evidence[0]).toMatchObject({ episode: "imo-1-a1", imouto: "imo-1" });
+    const names = (llm.calls["imo-1"]?.[0]?.tools ?? []).map((t) => t.name);
+    expect(names).toEqual(expect.arrayContaining(["skill_list", "skill_read", "skill_draft"]));
+    expect(d.search.search("package", { kinds: ["skill"] })).toEqual([]);
+  });
+
+  it("indexes promoted skills, rebuilds them on load, and shows them to the next imouto", async () => {
+    const llm = new RoutedMockLLMClient({ "imo-1": [final("x")] });
+    const d = mk(llm);
+    d.skills.project.draft({
+      name: "list-scripts",
+      description: "List package scripts",
+      body: "Read package.json and list every script.",
+      evidence: { episode: "orchestrator", imouto: "orchestrator", text: "manual", executed: false },
+    });
+    d.skills.project.promote("d-1");
+    expect(d.search.search("script", { kinds: ["skill"] }).map((h) => h.ref)).toEqual(["project:list-scripts"]);
+
+    d.spawn(spawnArgs());
+    await d.wait("orchestrator", 2_000);
+    expect(llm.calls["imo-1"]?.[0]?.system).toContain("- list-scripts [project] — List package scripts");
+
+    await until(() => state(d, "imo-1") === "idle");
+    rmSync(join(root, ".imouto", "search.db"), { force: true });
+    const d2 = mk(new RoutedMockLLMClient({}));
+    expect(d2.search.search("script", { kinds: ["skill"] })).toHaveLength(1);
   });
 });

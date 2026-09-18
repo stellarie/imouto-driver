@@ -1,6 +1,7 @@
 import type { ChatMessage, ContentPart, LLMClient } from "../llm/types.js";
 import type { Memory } from "../memory/memory.js";
 import type { SearchIndex } from "../search/index.js";
+import type { Skills } from "../skills/skills.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext } from "../tools/types.js";
 import type { DriverApi } from "./driver.js";
@@ -24,6 +25,7 @@ export interface RunnerHost {
   driver: DriverApi;
   memory: Memory;
   search: SearchIndex;
+  skills: Skills;
   save(rec: ImoutoRecord): void;
   setState(rec: ImoutoRecord, to: ImoutoState, reason: string): void;
   tuckRequested(id: string): boolean;
@@ -77,7 +79,7 @@ export async function runActivation(
   episode: string,
 ): Promise<string> {
   const { events, mailbox } = host;
-  const system = buildSystemPrompt(rec, host.memory.indexText());
+  const system = buildSystemPrompt(rec, host.memory.indexText(), host.skills.indexText());
   const tools = host.registry.list();
   const ctx: ToolContext = {
     root: rec.scope,
@@ -86,6 +88,7 @@ export async function runActivation(
     driver: host.driver,
     memory: host.memory,
     search: host.search,
+    skills: host.skills,
   };
   const counts: Record<string, number> = {};
   let lastNonEmpty = "";

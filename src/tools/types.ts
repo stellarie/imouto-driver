@@ -1,6 +1,7 @@
 import type { Memory } from "../memory/memory.js";
 import type { DriverApi } from "../runtime/driver.js";
 import type { SearchIndex } from "../search/index.js";
+import type { Skills } from "../skills/skills.js";
 
 export interface ToolResult {
   ok: boolean;
@@ -20,6 +21,7 @@ export interface ToolContext {
   driver: DriverApi;
   memory: Memory;
   search: SearchIndex;
+  skills: Skills;
 }
 
 export interface Tool {

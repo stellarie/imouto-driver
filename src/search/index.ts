@@ -6,7 +6,7 @@ import type { DatabaseSync as DatabaseSyncT } from "node:sqlite";
 const { DatabaseSync } = process.getBuiltinModule("node:sqlite");
 type DatabaseSync = DatabaseSyncT;
 
-export type SearchKind = "memory" | "episode" | "mail" | "doc";
+export type SearchKind = "memory" | "episode" | "mail" | "doc" | "skill";
 
 export interface SearchHit {
   kind: SearchKind;

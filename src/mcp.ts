@@ -13,6 +13,7 @@ import { Driver } from "./runtime/driver.js";
 import { formatMail, ORCHESTRATOR } from "./runtime/mailbox.js";
 import { runGatesText } from "./tools/gates-tool.js";
 import { formatHits, readMemory } from "./tools/memory-tools.js";
+import { formatSkill } from "./tools/skill-tools.js";
 
 const MAX_WAIT_SEC = 120;
 
@@ -163,10 +164,10 @@ export function createMcpServer(driver: Driver, info: McpInfo): McpServer {
   server.registerTool(
     "search",
     {
-      description: "Full-text search (BM25) over memory, episodes, mail, and Markdown docs.",
+      description: "Full-text search (BM25) over memory, episodes, mail, skills, and Markdown docs.",
       inputSchema: {
         query: z.string(),
-        kinds: z.array(z.enum(["memory", "episode", "mail", "doc"])).optional(),
+        kinds: z.array(z.enum(["memory", "episode", "mail", "doc", "skill"])).optional(),
         limit: z.number().optional(),
       },
     },
@@ -250,6 +251,49 @@ export function createMcpServer(driver: Driver, info: McpInfo): McpServer {
       inputSchema: {},
     },
     guard(() => text(driver.consolidate())),
+  );
+
+  // ── Skills: imoutos draft, the orchestrator promotes ──
+  server.registerTool(
+    "skill_list",
+    { description: "List promoted skills from both scopes.", inputSchema: {} },
+    guard(() => text(driver.skills.indexText())),
+  );
+
+  server.registerTool(
+    "skill_read",
+    { description: "Read a skill's full procedure.", inputSchema: { name: z.string() } },
+    guard(({ name }) => text(formatSkill(driver.skills.find(name)))),
+  );
+
+  server.registerTool(
+    "skill_drafts",
+    { description: "List skill drafts with their evidence and full body, for review.", inputSchema: { scope: scope.optional() } },
+    guard(({ scope: s }) => {
+      const scopes = s ? [s] : (["project", "global"] as const);
+      const blocks = scopes.flatMap((sc) =>
+        driver.skills.store(sc).drafts().map((d) => {
+          const ev = d.evidence.map((e) => `  evidence ${e.episode} (${e.imouto}): ${e.text}`).join("\n");
+          return `${sc} ${d.id} ${d.name} — ${d.description}\n${ev}\n\n${d.body}`;
+        }),
+      );
+      return text(blocks.join("\n\n---\n\n") || "(no drafts)");
+    }),
+  );
+
+  server.registerTool(
+    "skill_promote",
+    { description: "Promote a skill draft. An existing skill of that name is kept under versions/.", inputSchema: { id: z.string(), scope } },
+    guard(({ id, scope: s }) => text(`promoted ${id} -> ${driver.skills.store(s).promote(id).name}`)),
+  );
+
+  server.registerTool(
+    "skill_reject",
+    { description: "Reject a skill draft with a reason.", inputSchema: { id: z.string(), scope, reason: z.string() } },
+    guard(({ id, scope: s, reason }) => {
+      driver.skills.store(s).reject(id, reason);
+      return text(`rejected ${id}`);
+    }),
   );
 
   return server;

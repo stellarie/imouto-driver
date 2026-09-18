@@ -152,5 +152,21 @@ describe("Memory facade and consolidation", () => {
     const text = formatReport(r);
     expect(text).toContain("Pruned episodes: 1");
     expect(text).toContain("Promotable:\n- project c-1 ready");
+    expect(text).toContain("Skill suggestions:\n(none)");
+  });
+
+  it("suggests a skill when 3 procedure facts share a tag", () => {
+    const m = new Memory(join(dir, "global"), join(dir, "project"));
+    const add = (name: string, tags: string[], kind: "procedure" | "fact" = "procedure") => {
+      const c = m.project.note({ title: name, claim: "c", kind, tags, evidence: ev(`${name}-a1`, { executed: true }) });
+      m.project.promote(c.id, { name, description: "d" });
+    };
+    add("run-tests", ["testing", "rust"]);
+    add("run-goldens", ["testing"]);
+    add("update-snapshots", ["testing", "rust"]);
+    add("rust-fact", ["rust"], "fact");
+    const r = consolidate(m, join(dir, "state"), new Date(), 30);
+    expect(r.skillSuggestions).toEqual([{ tag: "testing", facts: ["run-goldens", "run-tests", "update-snapshots"] }]);
+    expect(formatReport(r)).toContain("Skill suggestions:\n- testing: run-goldens, run-tests, update-snapshots");
   });
 });
