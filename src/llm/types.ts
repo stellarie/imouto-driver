@@ -1,0 +1,43 @@
+export type ChatRole = "system" | "user" | "assistant" | "tool";
+
+export type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image"; dataUri: string };
+
+export interface LLMToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface ChatMessage {
+  role: ChatRole;
+  content: string | ContentPart[];
+  /** Assistant only; sent back as `reasoning_content`. */
+  reasoning?: string;
+  toolCallId?: string;
+  toolCalls?: LLMToolCall[];
+}
+
+export interface LLMToolSchema {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface LLMResponse {
+  content: string;
+  toolCalls: LLMToolCall[];
+  reasoning?: string;
+  usage?: { prompt: number; completion: number };
+}
+
+export interface ChatRequest {
+  system?: string;
+  messages: ChatMessage[];
+  tools?: LLMToolSchema[];
+}
+
+export interface LLMClient {
+  chat(req: ChatRequest): Promise<LLMResponse>;
+}

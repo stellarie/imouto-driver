@@ -11,7 +11,9 @@
     "mcp": "tsx src/mcp.ts",
     "probe": "tsx scripts/probe.ts",
     "smoke": "tsx scripts/smoke.ts",
-    "watch": "tsx scripts/watch.ts"
+    "watch": "tsx scripts/watch.ts",
+    "memory-smoke": "tsx scripts/memory-smoke.ts",
+    "skills-smoke": "tsx scripts/skills-smoke.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
