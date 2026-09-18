@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RoutedMockLLMClient } from "../llm/routed-mock.js";
@@ -38,7 +38,7 @@ async function until(cond: () => boolean, ms = 3_000): Promise<void> {
 }
 
 function mk(llm: LLMClient, opts: Partial<DriverOptions> = {}): Driver {
-  return new Driver({ root, llm, ...opts });
+  return new Driver({ root, llm, memoryGlobalDir: join(root, "global-memory"), ...opts });
 }
 const state = (d: Driver, id: string) => d.status().find((s) => s.id === id)?.state;
 const saved = (id: string) =>
@@ -323,8 +323,9 @@ describe("status, root, and images", () => {
 
   it("rejects a root that is relative or missing", () => {
     const llm = new RoutedMockLLMClient({});
-    expect(() => new Driver({ root: "C:UsersStellachibipop", llm })).toThrow("root must be an absolute path");
-    expect(() => new Driver({ root: join(root, "nope"), llm })).toThrow("root not found");
+    const g = join(root, "global-memory");
+    expect(() => new Driver({ root: "C:UsersStellachibipop", llm, memoryGlobalDir: g })).toThrow("root must be an absolute path");
+    expect(() => new Driver({ root: join(root, "nope"), llm, memoryGlobalDir: g })).toThrow("root not found");
     expect(() => mk(llm).setRoot("relative/dir")).toThrow("root must be an absolute path");
   });
 
@@ -402,5 +403,62 @@ describe("event log", () => {
     expect(ev.find((e) => e.type === "tool_result" && e.data.name === "view_image")?.data.images).toBe(1);
     expect(ev.filter((e) => e.type === "usage")).toHaveLength(3);
     expect(ev.some((e) => e.type === "mail" && e.data.text === "done")).toBe(true);
+  });
+});
+
+describe("episodes and memory wiring", () => {
+  it("writes one episode per finished activation", async () => {
+    const llm = new RoutedMockLLMClient({ "imo-1": [tc("grep", { pattern: "x" }), final("first " + "y".repeat(1_200)), final("second")] });
+    const d = mk(llm);
+    d.spawn(spawnArgs({ name: "Rin" }));
+    await d.wait("orchestrator", 2_000);
+    await until(() => state(d, "imo-1") === "idle");
+    d.send("orchestrator", "imo-1", "again");
+    await d.wait("orchestrator", 2_000);
+    await until(() => existsSync(join(root, ".imouto", "episodes", "imo-1-a2.json")));
+    const ep = JSON.parse(readFileSync(join(root, ".imouto", "episodes", "imo-1-a1.json"), "utf8"));
+    expect(ep).toMatchObject({ id: "imo-1-a1", imouto: "imo-1", name: "Rin", goal: "g", trigger: "spawn", outcome: "idle: replied", tools: { grep: 1 }, tokens: 30 });
+    expect(ep.reply).toHaveLength(1_000);
+    expect(ep.startedAt <= ep.endedAt).toBe(true);
+    const ep2 = JSON.parse(readFileSync(join(root, ".imouto", "episodes", "imo-1-a2.json"), "utf8"));
+    expect(ep2).toMatchObject({ trigger: "mail", reply: "second" });
+  });
+
+  it("records memory_note with the current episode and indexes it for search", async () => {
+    const llm = new RoutedMockLLMClient({
+      "imo-1": [
+        tc("memory_note", { title: "zebra fact", claim: "zebras are striped", evidence: "README.md:1" }),
+        final("noted"),
+      ],
+    });
+    const d = mk(llm);
+    d.spawn(spawnArgs());
+    await d.wait("orchestrator", 2_000);
+    const tool = llm.calls["imo-1"]?.[1]?.messages.find((m) => m.role === "tool");
+    expect(tool?.content).toBe("noted c-1");
+    expect(d.memory.project.candidate("c-1").evidence[0]).toMatchObject({ episode: "imo-1-a1", imouto: "imo-1", executed: false });
+    expect(d.search.search("zebras", { kinds: ["memory"] }).map((h) => h.ref)).toEqual(["project:c-1"]);
+  });
+
+  it("rebuilds memory, episode, and mail rows from files on load", async () => {
+    const d = mk(new RoutedMockLLMClient({ "imo-1": [final("quokka report")] }));
+    d.spawn(spawnArgs());
+    await d.wait("orchestrator", 2_000);
+    await until(() => state(d, "imo-1") === "idle");
+    d.memory.project.note({ title: "t", claim: "wombat facts", evidence: { episode: "orchestrator", imouto: "orchestrator", text: "x", executed: true } });
+    rmSync(join(root, ".imouto", "search.db"), { force: true });
+    const d2 = mk(new RoutedMockLLMClient({}));
+    expect(d2.search.search("quokka", { kinds: ["mail"] })).toHaveLength(1);
+    expect(d2.search.search("quokka", { kinds: ["episode"] })).toHaveLength(1);
+    expect(d2.search.search("wombat", { kinds: ["memory"] })).toHaveLength(1);
+  });
+
+  it("registers the memory tools in the default registry", async () => {
+    const llm = new RoutedMockLLMClient({ "imo-1": [final("x")] });
+    const d = mk(llm);
+    d.spawn(spawnArgs());
+    await d.wait("orchestrator", 2_000);
+    const names = (llm.calls["imo-1"]?.[0]?.tools ?? []).map((t) => t.name);
+    expect(names).toEqual(expect.arrayContaining(["search", "memory_recall", "memory_read", "memory_note"]));
   });
 });

@@ -1,9 +1,14 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { LLMClient } from "../llm/types.js";
+import { consolidate, formatReport } from "../memory/consolidate.js";
+import { defaultGlobalMemoryDir, Memory } from "../memory/memory.js";
+import type { MemoryScope } from "../memory/types.js";
+import { SearchIndex } from "../search/index.js";
 import { resolveInJail } from "../tools/pathjail.js";
 import { defaultRegistry } from "../tools/index.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import { episodeSearchBody, readEpisodes, REPLY_CHARS, writeEpisode, type Episode } from "./episodes.js";
 import { EventLog } from "./events.js";
 import { remaining, type ImoutoRecord, type ImoutoState } from "./imouto.js";
 import { Mailbox, ORCHESTRATOR, type Mail } from "./mailbox.js";
@@ -21,6 +26,8 @@ export interface DriverOptions {
   maxIterations?: number;
   /** Billed tokens. */
   defaultRootBudget?: number;
+  /** Global memory directory. Default: IMOUTO_MEMORY_DIR or ~/.imouto/memory. */
+  memoryGlobalDir?: string;
 }
 
 export interface SpawnInput {
@@ -62,6 +69,10 @@ export class Driver implements DriverApi {
   private readonly defaultRootBudget: number;
   private readonly semaphore: Semaphore;
   private readonly registry: ToolRegistry;
+  private readonly memoryGlobalDir: string;
+  private stateDir!: string;
+  private memoryStore!: Memory;
+  private searchIndex!: SearchIndex;
   private rootDir!: string;
   private events!: EventLog;
   private mailbox!: Mailbox;
@@ -79,6 +90,7 @@ export class Driver implements DriverApi {
     this.defaultRootBudget = opts.defaultRootBudget ?? 4_000_000;
     this.semaphore = new Semaphore(this.maxConcurrentCalls);
     this.registry = opts.registry ?? defaultRegistry();
+    this.memoryGlobalDir = opts.memoryGlobalDir ?? defaultGlobalMemoryDir();
     this.load(opts.root);
   }
 
@@ -88,6 +100,22 @@ export class Driver implements DriverApi {
 
   get eventsPath(): string {
     return this.events.path;
+  }
+
+  get memory(): Memory {
+    return this.memoryStore;
+  }
+
+  get search(): SearchIndex {
+    return this.searchIndex;
+  }
+
+  /** Prune old episodes and report what needs an orchestrator decision. */
+  consolidate(now = new Date()): string {
+    const ttl = Number(process.env.IMOUTO_EPISODE_TTL_DAYS) || 30;
+    const report = consolidate(this.memoryStore, this.stateDir, now, ttl);
+    for (const id of report.pruned) this.searchIndex.remove("episode", id);
+    return formatReport(report);
   }
 
   setRoot(path: string): void {
@@ -215,15 +243,60 @@ export class Driver implements DriverApi {
     if (!existsSync(root) || !statSync(root).isDirectory()) throw new Error(`root not found: ${root}`);
     const stateDir = join(root, ".imouto");
     this.rootDir = root;
+    this.stateDir = stateDir;
     this.events = new EventLog(stateDir);
     this.store = new ImoutoStore(stateDir);
     this.records = new Map(this.store.loadAll().map((r) => [r.id, r]));
     this.tuckFlags.clear();
     this.nextNum = 1 + Math.max(0, ...[...this.records.keys()].map((k) => Number(k.slice(4)) || 0));
     this.mailbox = new Mailbox(stateDir, (a) => a === ORCHESTRATOR || this.records.has(a), this.events);
+    this.memoryStore = new Memory(this.memoryGlobalDir, join(stateDir, "memory"), (what, scope, key, removed) =>
+      this.indexMemory(what, scope, key, removed),
+    );
+    this.searchIndex = new SearchIndex(join(stateDir, "search.db"), root);
+    this.rebuildSearch();
     this.mailbox.onDeliver((mail) => {
+      this.searchIndex.upsert("mail", `mail:${mail.id}`, `${mail.from} → ${mail.to}`, mail.text);
       if (this.records.get(mail.to)?.state === "idle") this.schedule(mail.to, "mail");
     });
+  }
+
+  /** Files are the source of truth; rebuild the derived rows on every load. */
+  private rebuildSearch(): void {
+    const idx = this.searchIndex;
+    idx.batch(() => {
+      idx.clear("memory");
+      idx.clear("episode");
+      idx.clear("mail");
+      for (const scope of ["global", "project"] as const) {
+        const store = this.memoryStore.store(scope);
+        for (const c of store.candidates()) this.indexMemory("candidate", scope, c.id, false);
+        for (const f of store.facts()) this.indexMemory("fact", scope, f.name, false);
+      }
+      for (const ep of readEpisodes(this.stateDir)) idx.upsert("episode", ep.id, ep.goal, episodeSearchBody(ep));
+      const log = join(this.stateDir, "mail.jsonl");
+      if (existsSync(log)) {
+        for (const line of readFileSync(log, "utf8").split("\n")) {
+          if (!line.trim()) continue;
+          const m = JSON.parse(line) as Mail;
+          idx.upsert("mail", `mail:${m.id}`, `${m.from} → ${m.to}`, m.text);
+        }
+      }
+    });
+  }
+
+  private indexMemory(what: "candidate" | "fact", scope: MemoryScope, key: string, removed: boolean): void {
+    const ref = `${scope}:${key}`;
+    if (removed) return this.searchIndex.remove("memory", ref);
+    const store = this.memoryStore.store(scope);
+    if (what === "candidate") {
+      const c = store.candidate(key);
+      const body = [c.claim, ...c.evidence.map((e) => e.text), c.tags.join(" ")].join("\n");
+      this.searchIndex.upsert("memory", ref, `candidate ${c.id}: ${c.title}`, body);
+    } else {
+      const f = store.fact(key);
+      this.searchIndex.upsert("memory", ref, `${f.name}: ${f.description}`, [f.body, f.tags.join(" ")].join("\n"));
+    }
   }
 
   private get(id: string): ImoutoRecord {
@@ -256,17 +329,57 @@ export class Driver implements DriverApi {
     }
     if (parts.length === 0) parts.push("Continue toward your goal.");
 
+    rec.activations = (rec.activations ?? 0) + 1;
+    const episode = `${rec.id}-a${rec.activations}`;
+    const startedAt = new Date().toISOString();
+    const historyStart = rec.history.length;
+    const usedStart = rec.budget.used;
+    let reason: string;
     try {
-      await runActivation(this.host(), rec, { role: "user", content: parts.join("\n\n") }, trigger);
+      reason = await runActivation(this.host(), rec, { role: "user", content: parts.join("\n\n") }, trigger, episode);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       this.events.emit(rec.id, "error", { message });
       this.setState(rec, "idle", "runner failure");
       this.store.save(rec);
+      reason = "runner failure";
     }
     // End rules: synchronous, so no mail can slip between the checks.
     this.active.delete(rec.id);
+    this.recordEpisode(rec, { episode, trigger, reason, startedAt, historyStart, usedStart });
     if (rec.state === "idle" && this.mailbox.pending(rec.id) > 0) this.schedule(rec.id, "mail");
+  }
+
+  private recordEpisode(
+    rec: ImoutoRecord,
+    a: { episode: string; trigger: string; reason: string; startedAt: string; historyStart: number; usedStart: number },
+  ): void {
+    const slice = rec.history.slice(a.historyStart);
+    const tools: Record<string, number> = {};
+    for (const m of slice) for (const tc of m.toolCalls ?? []) tools[tc.name] = (tools[tc.name] ?? 0) + 1;
+    const lastReply = [...slice]
+      .reverse()
+      .find((m) => m.role === "assistant" && typeof m.content === "string" && m.content.trim());
+    const ep: Episode = {
+      id: a.episode,
+      imouto: rec.id,
+      ...(rec.name ? { name: rec.name } : {}),
+      goal: rec.goal,
+      trigger: a.trigger,
+      outcome: `${rec.state}: ${a.reason}`,
+      reply: String(lastReply?.content ?? "").slice(0, REPLY_CHARS),
+      tools,
+      tokens: rec.budget.used - a.usedStart,
+      startedAt: a.startedAt,
+      endedAt: new Date().toISOString(),
+    };
+    try {
+      writeEpisode(this.stateDir, ep);
+      this.searchIndex.upsert("episode", ep.id, ep.goal, episodeSearchBody(ep));
+    } catch (e) {
+      const message = `episode write failed: ${e instanceof Error ? e.message : String(e)}`;
+      this.events.emit(rec.id, "error", { message });
+    }
   }
 
   private host(): RunnerHost {
@@ -278,6 +391,8 @@ export class Driver implements DriverApi {
       semaphore: this.semaphore,
       maxIterations: this.maxIterations,
       driver: this,
+      memory: this.memoryStore,
+      search: this.searchIndex,
       save: (r) => this.store.save(r),
       setState: (r, to, reason) => this.setState(r, to, reason),
       tuckRequested: (id) => this.tuckFlags.has(id),

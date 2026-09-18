@@ -1,4 +1,6 @@
 import type { ChatMessage, ContentPart, LLMClient } from "../llm/types.js";
+import type { Memory } from "../memory/memory.js";
+import type { SearchIndex } from "../search/index.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext } from "../tools/types.js";
 import type { DriverApi } from "./driver.js";
@@ -20,6 +22,8 @@ export interface RunnerHost {
   semaphore: Semaphore;
   maxIterations: number;
   driver: DriverApi;
+  memory: Memory;
+  search: SearchIndex;
   save(rec: ImoutoRecord): void;
   setState(rec: ImoutoRecord, to: ImoutoState, reason: string): void;
   tuckRequested(id: string): boolean;
@@ -63,31 +67,41 @@ function summarize(id: string, iterations: number, counts: Record<string, number
 /**
  * Runs one activation of an imouto: chat -> dispatch tools -> feed results,
  * until a final reply, a tuck, budget exhaustion, the iteration cap, or an error.
- * Leaves the record in its final state and saved.
+ * Leaves the record in its final state and saved. Returns the finish reason.
  */
 export async function runActivation(
   host: RunnerHost,
   rec: ImoutoRecord,
   userMessage: ChatMessage,
   trigger: string,
-): Promise<void> {
+  episode: string,
+): Promise<string> {
   const { events, mailbox } = host;
-  const system = buildSystemPrompt(rec);
+  const system = buildSystemPrompt(rec, host.memory.indexText());
   const tools = host.registry.list();
-  const ctx: ToolContext = { root: rec.scope, imoutoId: rec.id, driver: host.driver };
+  const ctx: ToolContext = {
+    root: rec.scope,
+    imoutoId: rec.id,
+    episode,
+    driver: host.driver,
+    memory: host.memory,
+    search: host.search,
+  };
   const counts: Record<string, number> = {};
   let lastNonEmpty = "";
 
   const tellParent = (text: string) => mailbox.send(rec.id, rec.parent, text);
-  const finish = (reason: string) => {
+  const finish = (reason: string): string => {
     const to: ImoutoState = host.tuckRequested(rec.id) ? "tucked" : "idle";
     host.setState(rec, to, reason);
     host.save(rec);
+    return reason;
   };
   const exhausted = () => {
     tellParent(`[budget exhausted] ${clip(lastNonEmpty, 500)}`);
     host.setState(rec, "tucked", "budget exhausted");
     host.save(rec);
+    return "budget exhausted";
   };
 
   events.emit(rec.id, "activation_start", {

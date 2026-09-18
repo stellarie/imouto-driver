@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Memory } from "../memory/memory.js";
 import type { DriverApi } from "../runtime/driver.js";
+import type { SearchIndex } from "../search/index.js";
 import { fsTool } from "./fs-tool.js";
 import { makeGatesTool } from "./gates-tool.js";
 import { grepTool } from "./grep-tool.js";
@@ -16,7 +18,14 @@ let root: string;
 let ctx: ToolContext;
 beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), "tools-")));
-  ctx = { root, imoutoId: "imo-1", driver: {} as DriverApi };
+  ctx = {
+    root,
+    imoutoId: "imo-1",
+    episode: "imo-1-a1",
+    driver: {} as DriverApi,
+    memory: {} as Memory,
+    search: {} as SearchIndex,
+  };
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 

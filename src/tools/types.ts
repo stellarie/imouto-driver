@@ -1,4 +1,6 @@
+import type { Memory } from "../memory/memory.js";
 import type { DriverApi } from "../runtime/driver.js";
+import type { SearchIndex } from "../search/index.js";
 
 export interface ToolResult {
   ok: boolean;
@@ -13,7 +15,11 @@ export interface ToolContext {
   /** This imouto's scope jail (absolute). */
   root: string;
   imoutoId: string;
+  /** "<imouto id>-a<n>": the current activation. */
+  episode: string;
   driver: DriverApi;
+  memory: Memory;
+  search: SearchIndex;
 }
 
 export interface Tool {

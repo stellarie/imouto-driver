@@ -18,6 +18,8 @@ export interface ImoutoRecord {
   budget: { total: number; used: number; granted: number };
   state: ImoutoState;
   history: ChatMessage[];
+  /** Finished activations; missing means 0. */
+  activations?: number;
   createdAt: string;
   updatedAt: string;
 }

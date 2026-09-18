@@ -7,10 +7,12 @@ import { z } from "zod";
 import { loadRepoEnv } from "./env.js";
 import { DeepSeekClient } from "./llm/deepseek.js";
 import { MockLLMClient } from "./llm/mock.js";
+import { distinctEpisodes, promotable } from "./memory/store.js";
 import type { LLMClient } from "./llm/types.js";
 import { Driver } from "./runtime/driver.js";
 import { formatMail, ORCHESTRATOR } from "./runtime/mailbox.js";
 import { runGatesText } from "./tools/gates-tool.js";
+import { formatHits, readMemory } from "./tools/memory-tools.js";
 
 const MAX_WAIT_SEC = 120;
 
@@ -153,6 +155,101 @@ export function createMcpServer(driver: Driver, info: McpInfo): McpServer {
     "run_gates",
     { description: "Run the deterministic gates (typecheck, lint, build, test) at the driver root.", inputSchema: {} },
     guard(async () => text(await runGatesText(driver.root))),
+  );
+
+  // ── Search and memory curation: the orchestrator decides what becomes a fact ──
+  const scope = z.enum(["project", "global"]);
+
+  server.registerTool(
+    "search",
+    {
+      description: "Full-text search (BM25) over memory, episodes, mail, and Markdown docs.",
+      inputSchema: {
+        query: z.string(),
+        kinds: z.array(z.enum(["memory", "episode", "mail", "doc"])).optional(),
+        limit: z.number().optional(),
+      },
+    },
+    guard(({ query, kinds, limit }) =>
+      text(
+        formatHits(
+          driver.search.search(query, { ...(kinds ? { kinds } : {}), ...(limit !== undefined ? { limit } : {}) }),
+        ),
+      ),
+    ),
+  );
+
+  server.registerTool(
+    "memory_read",
+    {
+      description: "Read a fact by name, or a candidate by id, with its evidence.",
+      inputSchema: { name: z.string().optional(), id: z.string().optional(), scope: scope.optional() },
+    },
+    guard((args) => text(readMemory({ memory: driver.memory }, args))),
+  );
+
+  server.registerTool(
+    "memory_candidates",
+    { description: "List memory candidates with their support and promotability.", inputSchema: { scope: scope.optional() } },
+    guard(({ scope: s }) => {
+      const scopes = s ? [s] : (["project", "global"] as const);
+      const rows = scopes.flatMap((sc) =>
+        driver.memory.store(sc).candidates().map(
+          (c) =>
+            `${sc} ${c.id} ${c.title} evidence:${c.evidence.length} episodes:${distinctEpisodes(c)} ` +
+            `promotable:${promotable(c) ? "yes" : "no"} contests:${c.contests ?? "-"}`,
+        ),
+      );
+      return text(rows.join("\n") || "(no candidates)");
+    }),
+  );
+
+  server.registerTool(
+    "memory_promote",
+    {
+      description:
+        "Promote a candidate to a fact. It must have evidence from 2 episodes or 1 executed proof, unless force is true.",
+      inputSchema: {
+        id: z.string(),
+        scope,
+        name: z.string().describe("kebab-case"),
+        description: z.string(),
+        body: z.string().optional(),
+        force: z.boolean().optional(),
+      },
+    },
+    guard(({ id, scope: s, name, description, body, force }) => {
+      driver.memory.store(s).promote(id, { name, description, ...(body ? { body } : {}), ...(force ? { force } : {}) });
+      return text(`promoted ${id} -> ${name}`);
+    }),
+  );
+
+  server.registerTool(
+    "memory_reject",
+    { description: "Reject a candidate with a reason.", inputSchema: { id: z.string(), scope, reason: z.string() } },
+    guard(({ id, scope: s, reason }) => {
+      driver.memory.store(s).reject(id, reason);
+      return text(`rejected ${id}`);
+    }),
+  );
+
+  server.registerTool(
+    "memory_forget",
+    { description: "Delete a fact.", inputSchema: { name: z.string(), scope } },
+    guard(({ name, scope: s }) => {
+      driver.memory.store(s).forget(name);
+      return text(`forgot ${name}`);
+    }),
+  );
+
+  server.registerTool(
+    "memory_consolidate",
+    {
+      description:
+        "Prune old episodes and list promotable candidates, contested facts, and stale candidates for your decision.",
+      inputSchema: {},
+    },
+    guard(() => text(driver.consolidate())),
   );
 
   return server;

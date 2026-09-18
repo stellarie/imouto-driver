@@ -14,8 +14,9 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
+let driver: Driver;
 async function connect(llm: RoutedMockLLMClient): Promise<Client> {
-  const driver = new Driver({ root, llm });
+  driver = new Driver({ root, llm, memoryGlobalDir: join(root, "global-memory") });
   const server = createMcpServer(driver, { model: "mock", live: false });
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
   await server.connect(serverT);
@@ -30,7 +31,12 @@ describe("MCP server", () => {
   it("exposes exactly the stage 1 tools", async () => {
     const client = await connect(new RoutedMockLLMClient({}));
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(names).toEqual(["health", "run_gates", "send", "set_root", "spawn", "status", "tuck", "wait", "wake"]);
+    expect(names).toEqual(
+      [
+        "health", "set_root", "spawn", "send", "wait", "status", "tuck", "wake", "run_gates",
+        "search", "memory_read", "memory_candidates", "memory_promote", "memory_reject", "memory_forget", "memory_consolidate",
+      ].sort(),
+    );
   });
 
   it("spawns an imouto and returns its reply through wait", async () => {
@@ -47,5 +53,35 @@ describe("MCP server", () => {
     const res = await client.callTool({ name: "wake", arguments: { id: "imo-9" } });
     expect(res.isError).toBe(true);
     expect(firstText(res)).toBe("unknown imouto: imo-9");
+  });
+
+  it("lists candidates with support, promotes, and consolidates", async () => {
+    const client = await connect(new RoutedMockLLMClient({}));
+    const ev = (episode: string) => ({ episode, imouto: "imo-1", text: "seen", executed: false });
+    driver.memory.project.note({ title: "one", claim: "c", evidence: ev("imo-1-a1") });
+    driver.memory.project.note({ title: "", claim: "", evidence: ev("imo-2-a1"), supports: "c-1" });
+    driver.memory.project.note({ title: "two", claim: "c", evidence: ev("imo-3-a1") });
+    const list = firstText(await client.callTool({ name: "memory_candidates", arguments: {} }));
+    expect(String(list).split("\n")).toEqual([
+      "project c-1 one evidence:2 episodes:2 promotable:yes contests:-",
+      "project c-2 two evidence:1 episodes:1 promotable:no contests:-",
+    ]);
+    const refused = await client.callTool({
+      name: "memory_promote",
+      arguments: { id: "c-2", scope: "project", name: "two", description: "d" },
+    });
+    expect(refused.isError).toBe(true);
+    const ok = await client.callTool({
+      name: "memory_promote",
+      arguments: { id: "c-1", scope: "project", name: "one", description: "first fact" },
+    });
+    expect(firstText(ok)).toBe("promoted c-1 -> one");
+    const report = firstText(await client.callTool({ name: "memory_consolidate", arguments: {} }));
+    expect(report).toContain("Pruned episodes: 0");
+    expect(report).toContain("Promotable:\n(none)");
+    expect(report).toContain("Contested facts:\n(none)");
+    expect(report).toContain("Stale candidates:\n(none)");
+    const hits = firstText(await client.callTool({ name: "search", arguments: { query: "first fact", kinds: ["memory"] } }));
+    expect(hits).toContain("[memory] project:one");
   });
 });
