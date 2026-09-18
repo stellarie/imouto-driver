@@ -1,0 +1,26 @@
+{
+  "name": "imouto-driver",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.10.0",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "mcp": "tsx src/mcp.ts",
+    "probe": "tsx scripts/probe.ts",
+    "smoke": "tsx scripts/smoke.ts",
+    "watch": "tsx scripts/watch.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "tsx": "^4",
+    "typescript": "^5.5",
+    "vitest": "^2"
+  }
+}

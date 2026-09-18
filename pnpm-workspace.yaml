@@ -1,0 +1,7 @@
+# pnpm 11 blocks dependency build scripts by default. esbuild (pulled in by
+# vitest/tsx) needs its postinstall to link the platform binary, so approve it.
+allowBuilds:
+  esbuild: true
+
+onlyBuiltDependencies:
+  - esbuild
