@@ -10,6 +10,7 @@ import type { SkillScope } from "../skills/store.js";
 import { resolveInJail } from "../tools/pathjail.js";
 import { defaultRegistry } from "../tools/index.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import { defaultGlobalGuidePath, guideSection } from "./guides.js";
 import { episodeSearchBody, readEpisodes, REPLY_CHARS, writeEpisode, type Episode } from "./episodes.js";
 import { EventLog } from "./events.js";
 import { remaining, type ImoutoRecord, type ImoutoState } from "./imouto.js";
@@ -32,6 +33,8 @@ export interface DriverOptions {
   memoryGlobalDir?: string;
   /** Global skills directory. Default: IMOUTO_SKILLS_DIR or ~/.imouto/skills. */
   skillsGlobalDir?: string;
+  /** Global IMOUTO.md. Default: IMOUTO_GUIDE or ~/.imouto/IMOUTO.md. */
+  guideGlobalPath?: string;
 }
 
 export interface SpawnInput {
@@ -75,6 +78,7 @@ export class Driver implements DriverApi {
   private readonly registry: ToolRegistry;
   private readonly memoryGlobalDir: string;
   private readonly skillsGlobalDir: string;
+  private readonly guideGlobalPath: string;
   private skillStore!: Skills;
   private stateDir!: string;
   private memoryStore!: Memory;
@@ -98,6 +102,7 @@ export class Driver implements DriverApi {
     this.registry = opts.registry ?? defaultRegistry();
     this.memoryGlobalDir = opts.memoryGlobalDir ?? defaultGlobalMemoryDir();
     this.skillsGlobalDir = opts.skillsGlobalDir ?? defaultGlobalSkillsDir();
+    this.guideGlobalPath = opts.guideGlobalPath ?? defaultGlobalGuidePath();
     this.load(opts.root);
   }
 
@@ -415,6 +420,7 @@ export class Driver implements DriverApi {
       memory: this.memoryStore,
       search: this.searchIndex,
       skills: this.skillStore,
+      guides: () => guideSection(this.guideGlobalPath, this.rootDir),
       save: (r) => this.store.save(r),
       setState: (r, to, reason) => this.setState(r, to, reason),
       tuckRequested: (id) => this.tuckFlags.has(id),

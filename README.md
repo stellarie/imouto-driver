@@ -26,6 +26,7 @@ Environment, from the shell or a `.env` file in the repo root:
 | `IMOUTO_ROOT` | Project directory. Default: the current directory. |
 | `IMOUTO_MEMORY_DIR` | Global memory directory. Default `~/.imouto/memory`. |
 | `IMOUTO_SKILLS_DIR` | Global skills directory. Default `~/.imouto/skills`. |
+| `IMOUTO_GUIDE` | Global guidelines file. Default `~/.imouto/IMOUTO.md`. |
 | `IMOUTO_EPISODE_TTL_DAYS` | Episode lifetime for `memory_consolidate`. Default 30. |
 
 In the repo `.env`, `DEEPSEEK_API_KEY` and `DEEPSEEK_MODEL` override the shell environment.
@@ -71,6 +72,17 @@ Orchestrator tools:
 Imouto tools: `fs`, `shell`, `grep`, `web` (fetch only), `view_image`, `run_gates`, `spawn`, `send`, `wait`,
 `search`, `memory_recall`, `memory_read`, `memory_note`, `skill_list`, `skill_read`, `skill_draft`.
 
+## Guidelines (IMOUTO.md)
+
+Every imouto's system prompt includes two optional files, after the base rules:
+
+1. The global guidelines: `~/.imouto/IMOUTO.md`, or `IMOUTO_GUIDE`.
+2. The project guidelines: `<root>/IMOUTO.md`.
+
+Keep them short: rules every task needs. Each file is cut at 12,000 characters.
+Put long material in a skill, and name the skill in `IMOUTO.md`.
+The orchestrator's brief carries only task-specific constraints.
+
 ## Memory
 
 Memory grows slowly, in three layers:
@@ -89,6 +101,7 @@ Search is SQLite FTS5 with BM25 ranking. There are no embeddings.
 A skill is a reusable procedure: `<name>/SKILL.md` with `name` and `description` frontmatter and a Markdown body.
 
 - Imoutos see only the skill index in their system prompt. They load a body with `skill_read`.
+- A long skill keeps extra `.md` pages next to its `SKILL.md`. `skill_read` lists them under `Files:`, and `skill_read` with `file` loads one page.
 - Imoutos propose skills with `skill_draft`, with evidence of where the procedure worked. Only the orchestrator promotes.
 - Project skills live in `<root>/.imouto/skills/`; global skills in the global skills directory. A project skill wins on a name clash.
 - `memory_consolidate` suggests a skill when 3 or more `procedure` facts share a tag.
@@ -127,6 +140,7 @@ Set `IMOUTO_ROOT` to watch a project other than the current directory.
 | `smoke` | Live run: one root imouto, one child, mail back to the orchestrator |
 | `memory-smoke` | Live run: one imouto notes a fact, another verifies and supports it, then it is promoted |
 | `skills-smoke` | Live run: one imouto drafts a skill, it is promoted, another imouto reads and follows it |
+| `guide-smoke` | Live run: a Rust task with no guideline hints; passes when the imouto reads `rust-guidelines` on its own |
 
 ## State
 
@@ -157,4 +171,5 @@ After a restart, every imouto loads as tucked. Wake the ones you need.
 - Web search.
 - Token-by-token reasoning in the live log.
 - Railway deployment with an HTTP transport and key auth.
-- Seeding skills, such as the how-claude-thinks framework.
+- Code navigation for large repos: a symbol-ranked repo map and code search. Gate it on a before-and-after benchmark.
+- Per-project gate commands for `run_gates` (today it reads only `package.json` scripts).

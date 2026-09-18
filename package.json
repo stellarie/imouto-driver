@@ -13,7 +13,8 @@
     "smoke": "tsx scripts/smoke.ts",
     "watch": "tsx scripts/watch.ts",
     "memory-smoke": "tsx scripts/memory-smoke.ts",
-    "skills-smoke": "tsx scripts/skills-smoke.ts"
+    "skills-smoke": "tsx scripts/skills-smoke.ts",
+    "guide-smoke": "tsx scripts/guide-smoke.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

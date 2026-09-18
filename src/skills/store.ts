@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renam
 import { join } from "node:path";
 import type { Evidence } from "../memory/types.js";
 import { writeAtomic } from "../runtime/atomic.js";
+import { resolveInJail } from "../tools/pathjail.js";
 
 export type SkillScope = "global" | "project";
 
@@ -86,6 +87,35 @@ export class SkillStore {
 
   has(name: string): boolean {
     return NAME.test(name) && this.load(name) !== undefined;
+  }
+
+  /** Extra .md pages in the skill directory, relative, sorted. Excludes SKILL.md and versions/. */
+  files(name: string): string[] {
+    const root = join(this.dir, this.read(name).name);
+    const out: string[] = [];
+    const walk = (dir: string, rel: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const r = rel ? `${rel}/${e.name}` : e.name;
+        if (e.isDirectory()) {
+          if (r !== "versions") walk(join(dir, e.name), r);
+        } else if (e.isFile() && e.name.endsWith(".md") && r !== "SKILL.md") {
+          out.push(r);
+        }
+      }
+    };
+    walk(root, "");
+    return out.sort();
+  }
+
+  /** One page of a skill. Paths stay inside the skill directory. */
+  readFile(name: string, file: string): string {
+    const root = join(this.dir, this.read(name).name);
+    const norm = file.replaceAll("\\", "/");
+    if (!norm.endsWith(".md")) throw new Error(`not a markdown page: ${file}`);
+    if (norm === "versions" || norm.startsWith("versions/")) throw new Error(`not a page: ${file}`);
+    const abs = resolveInJail(root, norm);
+    if (!existsSync(abs)) throw new Error(`unknown page: ${file} (see the Files list from skill_read)`);
+    return readFileSync(abs, "utf8");
   }
 
   draft(input: DraftInput): SkillDraft {

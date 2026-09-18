@@ -26,6 +26,8 @@ export interface RunnerHost {
   memory: Memory;
   search: SearchIndex;
   skills: Skills;
+  /** Global and project IMOUTO.md text, read per activation. */
+  guides(): string;
   save(rec: ImoutoRecord): void;
   setState(rec: ImoutoRecord, to: ImoutoState, reason: string): void;
   tuckRequested(id: string): boolean;
@@ -79,7 +81,7 @@ export async function runActivation(
   episode: string,
 ): Promise<string> {
   const { events, mailbox } = host;
-  const system = buildSystemPrompt(rec, host.memory.indexText(), host.skills.indexText());
+  const system = buildSystemPrompt(rec, host.guides(), host.memory.indexText(), host.skills.indexText());
   const tools = host.registry.list();
   const ctx: ToolContext = {
     root: rec.scope,

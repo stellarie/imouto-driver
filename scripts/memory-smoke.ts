@@ -23,6 +23,7 @@ const driver = new Driver({
   llm: new DeepSeekClient({ apiKey }),
   memoryGlobalDir: join(root, "global-memory"),
   skillsGlobalDir: join(root, "global-skills"),
+  guideGlobalPath: join(root, "global-guide.md"),
 });
 
 async function run(name: string, goal: string, brief: string): Promise<void> {

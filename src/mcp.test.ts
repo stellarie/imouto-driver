@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -16,7 +16,7 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 let driver: Driver;
 async function connect(llm: RoutedMockLLMClient): Promise<Client> {
-  driver = new Driver({ root, llm, memoryGlobalDir: join(root, "global-memory"), skillsGlobalDir: join(root, "global-skills") });
+  driver = new Driver({ root, llm, memoryGlobalDir: join(root, "global-memory"), skillsGlobalDir: join(root, "global-skills"), guideGlobalPath: join(root, "global-guide.md") });
   const server = createMcpServer(driver, { model: "mock", live: false });
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
   await server.connect(serverT);
@@ -106,5 +106,18 @@ describe("MCP server", () => {
     await client.callTool({ name: "spawn", arguments: { goal: "g", brief: "b" } });
     await client.callTool({ name: "wait", arguments: { timeoutSec: 2 } });
     expect(llm.calls["imo-1"]?.[0]?.system).toContain("- list-scripts [project] — List package scripts");
+  });
+
+  it("lists skill pages and reads one page through skill_read", async () => {
+    const client = await connect(new RoutedMockLLMClient({}));
+    const skillDir = join(root, "global-skills", "kotlin-guidelines");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: kotlin-guidelines\ndescription: Kotlin rules\n---\n\nSee Naming.md.\n");
+    writeFileSync(join(skillDir, "Naming.md"), "Use camelCase.");
+    const top = firstText(await client.callTool({ name: "skill_read", arguments: { name: "kotlin-guidelines" } }));
+    expect(top).toContain("See Naming.md.");
+    expect(top).toMatch(/Files \(read with skill_read name \+ file\):\n- Naming\.md$/);
+    const page = firstText(await client.callTool({ name: "skill_read", arguments: { name: "kotlin-guidelines", file: "Naming.md" } }));
+    expect(page).toBe("Use camelCase.");
   });
 });
