@@ -1,4 +1,5 @@
 import type { Memory } from "../memory/memory.js";
+import type { ShellInfo } from "../platform/shell.js";
 import type { DriverApi } from "../runtime/driver.js";
 import type { SearchIndex } from "../search/index.js";
 import type { Skills } from "../skills/skills.js";
@@ -22,6 +23,8 @@ export interface ToolContext {
   memory: Memory;
   search: SearchIndex;
   skills: Skills;
+  /** The shell that runs `shell` and gate commands. */
+  shell: ShellInfo;
 }
 
 export interface Tool {

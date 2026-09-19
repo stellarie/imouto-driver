@@ -20,6 +20,12 @@ export interface ImoutoRecord {
   history: ChatMessage[];
   /** Finished activations; missing means 0. */
   activations?: number;
+  /** Prompt plus completion tokens of the last call: the next prompt's base size. */
+  contextTokens?: number;
+  /** Raw token totals across all calls. */
+  usage?: { hit: number; miss: number; completion: number };
+  /** May this imouto spawn children? Missing means no. */
+  children?: boolean;
   createdAt: string;
   updatedAt: string;
 }

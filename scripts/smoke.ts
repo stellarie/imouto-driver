@@ -19,9 +19,10 @@ const rec = driver.spawn({
   goal: "Report a summary of the exported classes in src/runtime to the orchestrator.",
   brief:
     "Spawn exactly one child with a budget of 400000. Its goal: use grep to find every exported class in src/runtime, " +
-    "read one of those files with fs, and send the findings to you with send. " +
+    "read one of those files with fs, run `uname -s` with the shell tool, and send the findings and the uname output to you with send. " +
     "Then wait for the child's mail and reply with a short summary. Do not do the search yourself.",
   budget: 1_500_000,
+  children: true,
 });
 console.log(`spawned ${rec.id}; run 'corepack pnpm watch' in another terminal to follow it`);
 
@@ -35,5 +36,5 @@ while (!done && Date.now() < deadline) {
 
 const used = driver.status().reduce((n, s) => n + s.used, 0);
 console.log(`\nimoutos: ${driver.status().map((s) => `${s.id}(${s.state})`).join(" ")}`);
-console.log(`total billed tokens: ${used}`);
+console.log(`total cost units: ${used}`);
 process.exit(done ? 0 : 1);

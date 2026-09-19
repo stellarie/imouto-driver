@@ -18,7 +18,8 @@ export function makeWebTool(opts: WebToolOptions = {}): Tool {
     const url = String(args.url ?? "");
     if (!url) return { ok: false, output: "", error: "no url provided" };
     try {
-      const res = await fetchImpl(url);
+      // Some APIs, such as api.github.com, reject requests without a User-Agent.
+      const res = await fetchImpl(url, { headers: { "user-agent": "imouto-driver" } });
       const text = (await res.text()).slice(0, MAX_CHARS);
       if (res.ok) return { ok: true, output: text };
       return { ok: false, output: text, error: `HTTP ${res.status}` };

@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { LLMClient } from "../llm/types.js";
@@ -7,15 +8,17 @@ import type { MemoryScope } from "../memory/types.js";
 import { SearchIndex } from "../search/index.js";
 import { defaultGlobalSkillsDir, Skills } from "../skills/skills.js";
 import type { SkillScope } from "../skills/store.js";
+import { realProbe, selectShell, type ShellInfo } from "../platform/shell.js";
 import { resolveInJail } from "../tools/pathjail.js";
 import { defaultRegistry } from "../tools/index.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import { DEFAULT_WEIGHTS, usd, type CostWeights } from "./cost.js";
 import { defaultGlobalGuidePath, guideSection } from "./guides.js";
 import { episodeSearchBody, readEpisodes, REPLY_CHARS, writeEpisode, type Episode } from "./episodes.js";
 import { EventLog } from "./events.js";
 import { remaining, type ImoutoRecord, type ImoutoState } from "./imouto.js";
 import { Mailbox, ORCHESTRATOR, type Mail } from "./mailbox.js";
-import { runActivation, type RunnerHost } from "./runner.js";
+import { COMPLETION_RESERVE, runActivation, type Activity, type ContextLimits, type RunnerHost } from "./runner.js";
 import { Semaphore } from "./semaphore.js";
 import { ImoutoStore } from "./store.js";
 
@@ -35,6 +38,16 @@ export interface DriverOptions {
   skillsGlobalDir?: string;
   /** Global IMOUTO.md. Default: IMOUTO_GUIDE or ~/.imouto/IMOUTO.md. */
   guideGlobalPath?: string;
+  /** Cost units per token kind; default follows deepseek-flash prices. */
+  costWeights?: CostWeights;
+  /** Compact history at this estimated prompt size. Default 600000. */
+  compactAtTokens?: number;
+  /** Stop with a handoff above this estimated prompt size. Default 1000000. */
+  contextLimitTokens?: number;
+  /** Messages kept verbatim after compaction. Default 6. */
+  keepRecentMessages?: number;
+  /** Shell for `shell` and gates. Default: selected for this platform. */
+  shell?: ShellInfo;
 }
 
 export interface SpawnInput {
@@ -45,6 +58,8 @@ export interface SpawnInput {
   scope?: string;
   /** Billed tokens. */
   budget?: number;
+  /** May this imouto spawn its own children? Default false. */
+  children?: boolean;
 }
 
 export interface ImoutoStatus {
@@ -57,6 +72,10 @@ export interface ImoutoStatus {
   used: number;
   remaining: number;
   mailPending: number;
+  /** Estimated USD at off-peak prices. */
+  usd: number;
+  /** calling <n>s, waiting for slot, in tool <name>, or -. */
+  activity: string;
 }
 
 /** The slice of the driver that imouto-side tools may call. */
@@ -71,6 +90,7 @@ type Trigger = "spawn" | "mail" | "wake";
 export class Driver implements DriverApi {
   readonly maxDepth: number;
   readonly maxConcurrentCalls: number;
+  readonly shell: ShellInfo;
   private readonly llm: LLMClient;
   private readonly maxIterations: number;
   private readonly defaultRootBudget: number;
@@ -79,6 +99,9 @@ export class Driver implements DriverApi {
   private readonly memoryGlobalDir: string;
   private readonly skillsGlobalDir: string;
   private readonly guideGlobalPath: string;
+  private readonly costWeights: CostWeights;
+  private readonly limits: ContextLimits;
+  private readonly activity = new Map<string, Activity>();
   private skillStore!: Skills;
   private stateDir!: string;
   private memoryStore!: Memory;
@@ -96,13 +119,20 @@ export class Driver implements DriverApi {
     this.llm = opts.llm;
     this.maxDepth = opts.maxDepth ?? 3;
     this.maxConcurrentCalls = opts.maxConcurrentCalls ?? 4;
-    this.maxIterations = opts.maxIterations ?? 40;
+    this.maxIterations = opts.maxIterations ?? 100;
     this.defaultRootBudget = opts.defaultRootBudget ?? 4_000_000;
     this.semaphore = new Semaphore(this.maxConcurrentCalls);
     this.registry = opts.registry ?? defaultRegistry();
     this.memoryGlobalDir = opts.memoryGlobalDir ?? defaultGlobalMemoryDir();
     this.skillsGlobalDir = opts.skillsGlobalDir ?? defaultGlobalSkillsDir();
     this.guideGlobalPath = opts.guideGlobalPath ?? defaultGlobalGuidePath();
+    this.costWeights = opts.costWeights ?? DEFAULT_WEIGHTS;
+    this.shell = opts.shell ?? selectShell(realProbe());
+    this.limits = {
+      compactAtTokens: opts.compactAtTokens ?? 600_000,
+      contextLimitTokens: opts.contextLimitTokens ?? 1_000_000,
+      keepRecentMessages: opts.keepRecentMessages ?? 6,
+    };
     this.load(opts.root);
   }
 
@@ -145,6 +175,7 @@ export class Driver implements DriverApi {
 
   spawnChild(parentId: string, input: SpawnInput): ImoutoRecord {
     const parent = parentId === ORCHESTRATOR ? undefined : this.get(parentId);
+    if (parent && parent.children !== true) throw new Error("children not allowed for this imouto");
     const depth = (parent?.depth ?? 0) + 1;
     if (depth > this.maxDepth) throw new Error(`max depth ${this.maxDepth} reached`);
 
@@ -177,6 +208,7 @@ export class Driver implements DriverApi {
       brief: input.brief,
       scope,
       budget: { total: budget, used: 0, granted: 0 },
+      children: input.children === true,
       state: "idle",
       history: [],
       createdAt: now,
@@ -210,6 +242,8 @@ export class Driver implements DriverApi {
       used: r.budget.used,
       remaining: remaining(r),
       mailPending: this.mailbox.pending(r.id),
+      usd: usd(r.budget.used, this.costWeights),
+      activity: this.describeActivity(r.id),
     }));
   }
 
@@ -228,8 +262,14 @@ export class Driver implements DriverApi {
     return "tucked";
   }
 
-  wake(id: string, text?: string, budget?: number): void {
+  /** "resumed" when a pending tuck was cancelled instead. */
+  wake(id: string, text?: string, budget?: number): "woke" | "resumed" {
     const rec = this.get(id);
+    if (this.active.has(id) && this.tuckFlags.has(id)) {
+      this.tuckFlags.delete(id);
+      if (text) this.mailbox.send(ORCHESTRATOR, id, text);
+      return "resumed";
+    }
     if (rec.state !== "tucked" || this.active.has(id)) throw new Error(`not tucked: ${id}`);
     const parent = rec.parent === ORCHESTRATOR ? undefined : this.get(rec.parent);
     if (budget !== undefined) {
@@ -239,7 +279,9 @@ export class Driver implements DriverApi {
       }
     }
     // Validate everything before mutating any budget.
-    if (remaining(rec) + (budget ?? 0) <= 0) throw new Error("budget exhausted: pass budget to wake");
+    // Less than one call's output allowance cannot make progress.
+    const minCall = COMPLETION_RESERVE * this.costWeights.completion;
+    if (remaining(rec) + (budget ?? 0) < minCall) throw new Error("budget exhausted: pass budget to wake");
     if (budget !== undefined) {
       if (parent) {
         parent.budget.granted += budget;
@@ -251,6 +293,7 @@ export class Driver implements DriverApi {
     this.setState(rec, "idle", "woken by orchestrator");
     this.store.save(rec);
     this.schedule(id, "wake", text);
+    return "woke";
   }
 
   private load(root: string): void {
@@ -408,6 +451,23 @@ export class Driver implements DriverApi {
     }
   }
 
+  private describeActivity(id: string): string {
+    const a = this.activity.get(id);
+    if (!a) return "-";
+    if (a.kind === "slot") return "waiting for slot";
+    if (a.kind === "tool") return `in tool ${a.name ?? "?"}`;
+    return `calling ${Math.round((Date.now() - a.since) / 1000)}s`;
+  }
+
+  private diffStat(scope: string): Promise<string> {
+    return new Promise((resolve) => {
+      execFile("git", ["diff", "--stat"], { cwd: scope, timeout: 5_000, windowsHide: true }, (err, stdout, stderr) => {
+        if (err) resolve(/not a git repository/i.test(`${stderr}${err.message}`) ? "(not a git repo)" : "(diff unavailable)");
+        else resolve(stdout.trim() || "(no changes)");
+      });
+    });
+  }
+
   private host(): RunnerHost {
     return {
       llm: this.llm,
@@ -421,6 +481,11 @@ export class Driver implements DriverApi {
       search: this.searchIndex,
       skills: this.skillStore,
       guides: () => guideSection(this.guideGlobalPath, this.rootDir),
+      costWeights: this.costWeights,
+      limits: this.limits,
+      shell: this.shell,
+      diffStat: (scope) => this.diffStat(scope),
+      setActivity: (id, a) => (a ? this.activity.set(id, a) : this.activity.delete(id)),
       save: (r) => this.store.save(r),
       setState: (r, to, reason) => this.setState(r, to, reason),
       tuckRequested: (id) => this.tuckFlags.has(id),

@@ -27,6 +27,14 @@ describe("buildSystemPrompt", () => {
     expect(p).toContain("- list-scripts [project] — List package scripts");
   });
 
+  it("puts the platform line right after the base text", () => {
+    const line = "platform: linux; shell: bash (/bin/bash)";
+    const p = buildSystemPrompt(rec, "", "(no facts yet)", "(no skills yet)", line);
+    expect(p).toContain(`Report what you observed, not what you expect.`);
+    expect(p.indexOf(line)).toBeGreaterThan(p.indexOf("with skill_draft after a procedure works."));
+    expect(p.indexOf(line)).toBeLessThan(p.indexOf("Memory index"));
+  });
+
   it("shows (no facts yet) with an empty memory", () => {
     expect(buildSystemPrompt(rec, "", "(no facts yet)", "(no skills yet)")).toContain("Memory index (facts; use memory_read for details):\n(no facts yet)");
   });

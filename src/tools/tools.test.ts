@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Memory } from "../memory/memory.js";
 import type { DriverApi } from "../runtime/driver.js";
 import type { SearchIndex } from "../search/index.js";
 import type { Skills } from "../skills/skills.js";
+import { realProbe, selectShell } from "../platform/shell.js";
 import { fsTool } from "./fs-tool.js";
 import { makeGatesTool } from "./gates-tool.js";
 import { grepTool } from "./grep-tool.js";
@@ -27,6 +28,7 @@ beforeEach(() => {
     memory: {} as Memory,
     search: {} as SearchIndex,
     skills: {} as Skills,
+    shell: selectShell(realProbe()),
   };
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
@@ -111,5 +113,56 @@ describe("run_gates", () => {
     });
     const res = await tool.execute({}, ctx);
     expect(res.output).toBe("typecheck: PASS\ntypecheck output\n\ntest: FAIL\ntest output");
+  });
+});
+
+describe("fs line endings", () => {
+  it("edits a CRLF file with LF old text and keeps it CRLF", async () => {
+    writeFileSync(join(root, "win.txt"), "alpha\r\nbeta\r\ngamma\r\n");
+    const res = await fsTool.execute({ op: "edit", path: "win.txt", old: "beta\ngamma", new: "beta\nBETA2\ngamma" }, ctx);
+    expect(res.ok).toBe(true);
+    expect(readFileSync(join(root, "win.txt"), "utf8")).toBe("alpha\r\nbeta\r\nBETA2\r\ngamma\r\n");
+  });
+
+  it("keeps CRLF when overwriting a CRLF file, and writes new files as given", async () => {
+    writeFileSync(join(root, "win.txt"), "old\r\nfile\r\n");
+    await fsTool.execute({ op: "write", path: "win.txt", content: "new\ncontent\n" }, ctx);
+    expect(readFileSync(join(root, "win.txt"), "utf8")).toBe("new\r\ncontent\r\n");
+    await fsTool.execute({ op: "write", path: "fresh.txt", content: "a\nb\r\nc" }, ctx);
+    expect(readFileSync(join(root, "fresh.txt"), "utf8")).toBe("a\nb\r\nc");
+    writeFileSync(join(root, "unix.txt"), "x\ny\n");
+    await fsTool.execute({ op: "write", path: "unix.txt", content: "p\nq\n" }, ctx);
+    expect(readFileSync(join(root, "unix.txt"), "utf8")).toBe("p\nq\n");
+  });
+});
+
+describe("web fetch headers", () => {
+  it("sends a User-Agent", async () => {
+    let seen: Headers | undefined;
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      seen = new Headers(init?.headers);
+      return new Response("ok");
+    }) as unknown as typeof fetch;
+    await makeWebTool({ fetchImpl }).execute({ op: "fetch", url: "https://api.github.com/x" }, ctx);
+    expect(seen?.get("user-agent")).toBe("imouto-driver");
+  });
+});
+
+describe("fs read ranges", () => {
+  const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
+
+  it("returns numbered lines from offset with a footer when the file continues", async () => {
+    writeFileSync(join(root, "f.txt"), lines(50));
+    const res = await fsTool.execute({ op: "read", path: "f.txt", offset: 10, limit: 3 }, ctx);
+    expect(res.output).toBe("10: line 10\n11: line 11\n12: line 12\n[lines 10-12 of 50; pass offset to read more]");
+  });
+
+  it("reads at most 400 lines by default and needs no footer for a short whole file", async () => {
+    writeFileSync(join(root, "big.txt"), lines(1_000));
+    const big = String((await fsTool.execute({ op: "read", path: "big.txt" }, ctx)).output).split("\n");
+    expect(big).toHaveLength(401);
+    expect(big.at(-1)).toBe("[lines 1-400 of 1000; pass offset to read more]");
+    writeFileSync(join(root, "small.txt"), "a\r\nb\r\n");
+    expect((await fsTool.execute({ op: "read", path: "small.txt" }, ctx)).output).toBe("1: a\n2: b");
   });
 });

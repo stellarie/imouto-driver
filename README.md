@@ -28,9 +28,46 @@ Environment, from the shell or a `.env` file in the repo root:
 | `IMOUTO_SKILLS_DIR` | Global skills directory. Default `~/.imouto/skills`. |
 | `IMOUTO_GUIDE` | Global guidelines file. Default `~/.imouto/IMOUTO.md`. |
 | `IMOUTO_EPISODE_TTL_DAYS` | Episode lifetime for `memory_consolidate`. Default 30. |
+| `IMOUTO_SHELL` | Shell for `shell` and gates: `bash`, `sh`, `pwsh`, `powershell`, `cmd`, or a path. Default: chosen per platform. |
 
 In the repo `.env`, `DEEPSEEK_API_KEY` and `DEEPSEEK_MODEL` override the shell environment.
 Other `.env` values only fill unset variables, so an MCP client's `IMOUTO_ROOT` still wins.
+
+## Windows and Linux
+
+The driver runs on both. CI tests every change on `ubuntu-latest` and `windows-latest`.
+Each imouto's system prompt names its platform and shell, so it writes commands for the right shell.
+
+| Topic | Windows | Linux |
+|---|---|---|
+| Shell | Git Bash, found through `git --exec-path`. Then `pwsh`, `powershell`, `cmd`. | `/bin/bash`, else `/bin/sh`. |
+| Alternative shell | `IMOUTO_SHELL=pwsh` (or a path). | `IMOUTO_SHELL=<path>`. |
+| Trap | `C:\Windows\System32\bash.exe` is the WSL launcher. It runs commands in a Linux distro, not in your repo. The driver always rejects it. | None known. |
+| Without Git Bash | Imoutos get PowerShell or `cmd`. POSIX commands such as `sed`, `awk`, and `'…'` quoting fail; under `cmd`, `>` inside single quotes becomes a redirect. Install Git for Windows. | Not applicable. |
+| Registering the MCP server | Point the command at `node.exe` and the `tsx` CLI. MCP clients often cannot start `.cmd` shims such as `corepack`. | `corepack pnpm --dir <imouto-driver> mcp` works. |
+| Paths | Git Bash writes `C:\` as `/c/`. Tools accept `C:/...` and `C:\...`. | Paths are case-sensitive. |
+| Line endings | `fs edit` and `fs write` keep a file's CRLF. Git's `core.autocrlf` owns the rest. Imoutos never convert line endings. | LF. |
+| Command timeout | `taskkill /T /F` stops the whole process tree. | The command runs in its own process group; the group gets `SIGKILL`. |
+| File locks | `search.db` opens per call. An editor can still hold a lock on a project file. | No mandatory locks. |
+| WSL | To run the driver inside WSL, install Node there and keep the repo inside WSL. Do not mix Windows and WSL paths. | Not applicable. |
+
+### Gates
+
+`run_gates` reads `<root>/.imouto/gates.json` when it exists:
+
+```json
+{
+  "gates": [
+    { "name": "fmt", "command": "cargo fmt --all -- --check" },
+    { "name": "test", "command": "cargo test --workspace --no-fail-fast", "timeoutSec": 1800 },
+    { "name": "win-only", "command": { "windows": "cargo test -p chibipop-windows" } }
+  ]
+}
+```
+
+- A gate's `command` is a string, or an object with `windows`, `linux`, and `darwin` keys. A gate without a command for this platform reports `SKIP`.
+- Gates run in file order through the selected shell. `timeoutSec` defaults to 900.
+- Without `gates.json`, `run_gates` runs the `typecheck`, `lint`, `build`, and `test` scripts from `package.json`.
 
 ## Use from Claude Code
 
@@ -49,13 +86,13 @@ Orchestrator tools:
 |---|---|
 | `health` | Root, model, live or mock, limits |
 | `set_root` | Point the driver at another project directory |
-| `spawn` | Start an imouto: `goal`, `brief`, optional `name`, `scope`, `budget` |
+| `spawn` | Start an imouto: `goal`, `brief`, optional `name`, `scope`, `budget`, `children` (default false) |
 | `send` | Mail an imouto |
-| `wait` | Receive mail for the orchestrator (max 120 s per call) |
-| `status` | Every imouto: state, depth, tokens used and remaining, pending mail |
+| `wait` | Receive mail for the orchestrator (max 120 s per call; use 110 or less from Claude Code) |
+| `status` | Every imouto: state, depth, cost units used and remaining, estimated USD, pending mail, activity |
 | `tuck` | Suspend an imouto; its state is kept |
-| `wake` | Resume a tucked imouto, with optional text and extra budget |
-| `run_gates` | Run the root's `typecheck`, `lint`, `build`, and `test` scripts |
+| `wake` | Resume a tucked imouto, with optional text and extra budget. On a pending tuck, cancels the tuck |
+| `run_gates` | Run the root's gates: `.imouto/gates.json`, else `package.json` scripts |
 | `search` | Full-text search over memory, episodes, mail, skills, and Markdown docs |
 | `memory_read` | Read a fact or candidate with its evidence |
 | `memory_candidates` | List candidates with support and promotability |
@@ -117,6 +154,22 @@ description: Run the workspace tests the way CI does
 1. ...
 ```
 
+## Budgets and context
+
+Budgets are in cost units. One cost unit is one cache-miss prompt token.
+A cache hit costs 0.02 units and an output token 4 units, following deepseek-flash prices.
+1,000,000 units is about $0.15 off-peak. `status` shows the estimate in USD.
+Resent history is mostly cache hits, so it costs little.
+
+Before every model call, the driver:
+
+1. delivers pending mail as a new message;
+2. compacts the history into a summary when the estimated prompt passes 600,000 tokens (`compactAtTokens`);
+3. sends one wrap-up message at 90% of the budget or of the turn limit (default 100 turns);
+4. skips a call it cannot afford: the imouto tucks and mails a handoff with its last text, last tool calls, and `git diff --stat`.
+
+`fs read` returns 400 numbered lines by default; `offset` and `limit` select a range. A tool result is cut to 16,000 characters in history.
+
 ## Watch the imoutos think
 
 ```sh
@@ -159,7 +212,6 @@ After a restart, every imouto loads as tucked. Wake the ones you need.
 
 ## Known limits
 
-- `used` counts billed tokens: prompt plus completion for every call. The prompt includes the resent history, so `used` grows faster than the work.
 - `shell` runs with `cwd` at the imouto's scope but is not jailed. Imoutos have used it to leave their scope.
 - Two imoutos can edit the same file. Give them disjoint scopes.
 - Child budgets are not refunded.
@@ -172,4 +224,3 @@ After a restart, every imouto loads as tucked. Wake the ones you need.
 - Token-by-token reasoning in the live log.
 - Railway deployment with an HTTP transport and key auth.
 - Code navigation for large repos: a symbol-ranked repo map and code search. Gate it on a before-and-after benchmark.
-- Per-project gate commands for `run_gates` (today it reads only `package.json` scripts).

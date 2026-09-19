@@ -26,7 +26,8 @@ export const spawnTool: Tool = {
       brief: { type: "string", description: "Context, constraints, and what to report." },
       name: { type: "string" },
       scope: { type: "string", description: "Directory relative to your scope. Default '.'." },
-      budget: { type: "number", description: "Billed tokens. Default: 25% of your remaining budget." },
+      budget: { type: "number", description: "Cost units. Default: 25% of your remaining budget." },
+      children: { type: "boolean", description: "Allow the child to spawn its own children. Default false." },
     },
     required: ["goal", "brief"],
   },
@@ -41,6 +42,7 @@ export const spawnTool: Tool = {
         ...(name ? { name } : {}),
         ...(scope ? { scope } : {}),
         ...(budget !== undefined ? { budget } : {}),
+        ...(args.children === true ? { children: true } : {}),
       });
       return { ok: true, output: `spawned ${rec.id}` };
     } catch (e) {

@@ -15,9 +15,11 @@ export function buildSystemPrompt(
   guides: string,
   memoryIndex: string,
   skillIndex: string,
+  platform = "",
 ): string {
   return [
     BASE,
+    ...(platform ? [platform] : []),
     "",
     ...(guides ? [guides, ""] : []),
     "Memory index (facts; use memory_read for details):",
@@ -31,5 +33,6 @@ export function buildSystemPrompt(
     `goal: ${rec.goal}`,
     `brief: ${rec.brief}`,
     `scope: ${rec.scope}`,
+    ...(rec.children === true ? [] : ["You cannot spawn children. Do the work yourself."]),
   ].join("\n");
 }

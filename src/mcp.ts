@@ -87,16 +87,18 @@ export function createMcpServer(driver: Driver, info: McpInfo): McpServer {
         brief: z.string(),
         name: z.string().optional(),
         scope: z.string().optional().describe("Directory relative to the root. Default '.'."),
-        budget: z.number().optional().describe("Billed tokens. Default 4,000,000."),
+        budget: z.number().optional().describe("Cost units (miss-token equivalents). Default 4,000,000."),
+        children: z.boolean().optional().describe("Allow this imouto to spawn children. Default false."),
       },
     },
-    guard(({ goal, brief, name, scope, budget }) => {
+    guard(({ goal, brief, name, scope, budget, children }) => {
       const rec = driver.spawn({
         goal,
         brief,
         ...(name ? { name } : {}),
         ...(scope ? { scope } : {}),
         ...(budget !== undefined ? { budget } : {}),
+        ...(children !== undefined ? { children } : {}),
       });
       return text(`spawned ${rec.id}`);
     }),
@@ -128,7 +130,8 @@ export function createMcpServer(driver: Driver, info: McpInfo): McpServer {
         .status()
         .map(
           (s) =>
-            `${s.id} ${s.name ?? "-"} ${s.state} depth:${s.depth} ${s.used}/${s.remaining} mail:${s.mailPending} ${s.goal}`,
+            `${s.id} ${s.name ?? "-"} ${s.state} depth:${s.depth} ${s.used}/${s.remaining} ` +
+            `$${s.usd.toFixed(4)} mail:${s.mailPending} ${s.activity} ${s.goal}`,
         );
       return text(rows.join("\n") || "(no imoutos)");
     }),
@@ -146,16 +149,15 @@ export function createMcpServer(driver: Driver, info: McpInfo): McpServer {
       description: "Wake a tucked imouto with an optional message and extra budget.",
       inputSchema: { id: z.string(), text: z.string().optional(), budget: z.number().optional() },
     },
-    guard(({ id, text: body, budget }) => {
-      driver.wake(id, body, budget);
-      return text(`woke ${id}`);
-    }),
+    guard(({ id, text: body, budget }) =>
+      text(driver.wake(id, body, budget) === "resumed" ? `tuck cancelled ${id}` : `woke ${id}`),
+    ),
   );
 
   server.registerTool(
     "run_gates",
     { description: "Run the deterministic gates (typecheck, lint, build, test) at the driver root.", inputSchema: {} },
-    guard(async () => text(await runGatesText(driver.root))),
+    guard(async () => text(await runGatesText(driver.root, driver.shell))),
   );
 
   // ── Search and memory curation: the orchestrator decides what becomes a fact ──

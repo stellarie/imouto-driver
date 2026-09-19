@@ -29,7 +29,8 @@ export interface LLMResponse {
   content: string;
   toolCalls: LLMToolCall[];
   reasoning?: string;
-  usage?: { prompt: number; completion: number };
+  /** promptHit/promptMiss: cache split. Clients fill both; missing means all miss. */
+  usage?: { prompt: number; completion: number; promptHit?: number; promptMiss?: number };
 }
 
 export interface ChatRequest {
