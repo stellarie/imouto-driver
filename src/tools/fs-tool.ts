@@ -1,9 +1,24 @@
 import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Tool, ToolContext, ToolResult } from "./types.js";
 import { resolveInJail } from "./pathjail.js";
 
 export const DEFAULT_READ_LINES = 400;
+
+/** A file counts as CRLF when its first line break is CRLF. */
+export function isCrlf(text: string): boolean {
+  const i = text.indexOf("\n");
+  return i > 0 && text[i - 1] === "\r";
+}
+
+export function toLf(text: string): string {
+  return text.replace(/\r\n/g, "\n");
+}
+
+export function toCrlf(text: string): string {
+  return toLf(text).replace(/\n/g, "\r\n");
+}
 
 /** Numbered lines `<n>: <text>` from `offset` (1-based), with a footer when the file continues. */
 export function readRange(text: string, offset: unknown, limit: unknown): string {
@@ -30,17 +45,24 @@ async function execute(args: Record<string, unknown>, ctx: ToolContext): Promise
       case "write": {
         const abs = resolveInJail(ctx.root, String(args.path));
         await mkdir(dirname(abs), { recursive: true });
-        await writeFile(abs, String(args.content ?? ""), "utf8");
+        let content = String(args.content ?? "");
+        // Keep an existing file's line endings; a new file is written as given.
+        if (existsSync(abs) && isCrlf(await readFile(abs, "utf8"))) content = toCrlf(content);
+        await writeFile(abs, content, "utf8");
         return { ok: true, output: `wrote ${String(args.path)}` };
       }
       case "edit": {
         const abs = resolveInJail(ctx.root, String(args.path));
         const before = await readFile(abs, "utf8");
-        const oldStr = String(args.old);
-        if (!before.includes(oldStr)) {
+        const crlf = isCrlf(before);
+        // Match with LF on both sides; models write LF even for CRLF files.
+        const text = toLf(before);
+        const oldStr = toLf(String(args.old));
+        if (!text.includes(oldStr)) {
           return { ok: false, output: "", error: "old string not found" };
         }
-        await writeFile(abs, before.replace(oldStr, String(args.new ?? "")), "utf8");
+        const after = text.replace(oldStr, toLf(String(args.new ?? "")));
+        await writeFile(abs, crlf ? toCrlf(after) : after, "utf8");
         return { ok: true, output: `edited ${String(args.path)}` };
       }
       case "list": {

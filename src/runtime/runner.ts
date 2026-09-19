@@ -1,5 +1,6 @@
 import type { ChatMessage, ContentPart, LLMClient, LLMResponse } from "../llm/types.js";
 import type { Memory } from "../memory/memory.js";
+import { platformLine, type ShellInfo } from "../platform/shell.js";
 import type { SearchIndex } from "../search/index.js";
 import type { Skills } from "../skills/skills.js";
 import type { ToolRegistry } from "../tools/registry.js";
@@ -48,6 +49,7 @@ export interface RunnerHost {
   skills: Skills;
   costWeights: CostWeights;
   limits: ContextLimits;
+  shell: ShellInfo;
   /** Global and project IMOUTO.md text, read per activation. */
   guides(): string;
   /** `git diff --stat` for a scope, or a short reason it is unavailable. */
@@ -148,7 +150,7 @@ export async function runActivation(
   episode: string,
 ): Promise<string> {
   const { events, mailbox, costWeights: w, limits } = host;
-  const system = buildSystemPrompt(rec, host.guides(), host.memory.indexText(), host.skills.indexText());
+  const system = buildSystemPrompt(rec, host.guides(), host.memory.indexText(), host.skills.indexText(), platformLine(host.shell));
   const tools = host.registry.list().filter((t) => t.name !== "spawn" || rec.children === true);
   const ctx: ToolContext = {
     root: rec.scope,
@@ -158,6 +160,7 @@ export async function runActivation(
     memory: host.memory,
     search: host.search,
     skills: host.skills,
+    shell: host.shell,
   };
   const counts: Record<string, number> = {};
   const recentCalls: string[] = [];

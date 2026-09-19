@@ -8,6 +8,7 @@ import type { MemoryScope } from "../memory/types.js";
 import { SearchIndex } from "../search/index.js";
 import { defaultGlobalSkillsDir, Skills } from "../skills/skills.js";
 import type { SkillScope } from "../skills/store.js";
+import { realProbe, selectShell, type ShellInfo } from "../platform/shell.js";
 import { resolveInJail } from "../tools/pathjail.js";
 import { defaultRegistry } from "../tools/index.js";
 import type { ToolRegistry } from "../tools/registry.js";
@@ -45,6 +46,8 @@ export interface DriverOptions {
   contextLimitTokens?: number;
   /** Messages kept verbatim after compaction. Default 6. */
   keepRecentMessages?: number;
+  /** Shell for `shell` and gates. Default: selected for this platform. */
+  shell?: ShellInfo;
 }
 
 export interface SpawnInput {
@@ -87,6 +90,7 @@ type Trigger = "spawn" | "mail" | "wake";
 export class Driver implements DriverApi {
   readonly maxDepth: number;
   readonly maxConcurrentCalls: number;
+  readonly shell: ShellInfo;
   private readonly llm: LLMClient;
   private readonly maxIterations: number;
   private readonly defaultRootBudget: number;
@@ -123,6 +127,7 @@ export class Driver implements DriverApi {
     this.skillsGlobalDir = opts.skillsGlobalDir ?? defaultGlobalSkillsDir();
     this.guideGlobalPath = opts.guideGlobalPath ?? defaultGlobalGuidePath();
     this.costWeights = opts.costWeights ?? DEFAULT_WEIGHTS;
+    this.shell = opts.shell ?? selectShell(realProbe());
     this.limits = {
       compactAtTokens: opts.compactAtTokens ?? 600_000,
       contextLimitTokens: opts.contextLimitTokens ?? 1_000_000,
@@ -478,6 +483,7 @@ export class Driver implements DriverApi {
       guides: () => guideSection(this.guideGlobalPath, this.rootDir),
       costWeights: this.costWeights,
       limits: this.limits,
+      shell: this.shell,
       diffStat: (scope) => this.diffStat(scope),
       setActivity: (id, a) => (a ? this.activity.set(id, a) : this.activity.delete(id)),
       save: (r) => this.store.save(r),

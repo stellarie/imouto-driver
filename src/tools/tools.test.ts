@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Memory } from "../memory/memory.js";
 import type { DriverApi } from "../runtime/driver.js";
 import type { SearchIndex } from "../search/index.js";
 import type { Skills } from "../skills/skills.js";
+import { realProbe, selectShell } from "../platform/shell.js";
 import { fsTool } from "./fs-tool.js";
 import { makeGatesTool } from "./gates-tool.js";
 import { grepTool } from "./grep-tool.js";
@@ -27,6 +28,7 @@ beforeEach(() => {
     memory: {} as Memory,
     search: {} as SearchIndex,
     skills: {} as Skills,
+    shell: selectShell(realProbe()),
   };
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
@@ -111,6 +113,38 @@ describe("run_gates", () => {
     });
     const res = await tool.execute({}, ctx);
     expect(res.output).toBe("typecheck: PASS\ntypecheck output\n\ntest: FAIL\ntest output");
+  });
+});
+
+describe("fs line endings", () => {
+  it("edits a CRLF file with LF old text and keeps it CRLF", async () => {
+    writeFileSync(join(root, "win.txt"), "alpha\r\nbeta\r\ngamma\r\n");
+    const res = await fsTool.execute({ op: "edit", path: "win.txt", old: "beta\ngamma", new: "beta\nBETA2\ngamma" }, ctx);
+    expect(res.ok).toBe(true);
+    expect(readFileSync(join(root, "win.txt"), "utf8")).toBe("alpha\r\nbeta\r\nBETA2\r\ngamma\r\n");
+  });
+
+  it("keeps CRLF when overwriting a CRLF file, and writes new files as given", async () => {
+    writeFileSync(join(root, "win.txt"), "old\r\nfile\r\n");
+    await fsTool.execute({ op: "write", path: "win.txt", content: "new\ncontent\n" }, ctx);
+    expect(readFileSync(join(root, "win.txt"), "utf8")).toBe("new\r\ncontent\r\n");
+    await fsTool.execute({ op: "write", path: "fresh.txt", content: "a\nb\r\nc" }, ctx);
+    expect(readFileSync(join(root, "fresh.txt"), "utf8")).toBe("a\nb\r\nc");
+    writeFileSync(join(root, "unix.txt"), "x\ny\n");
+    await fsTool.execute({ op: "write", path: "unix.txt", content: "p\nq\n" }, ctx);
+    expect(readFileSync(join(root, "unix.txt"), "utf8")).toBe("p\nq\n");
+  });
+});
+
+describe("web fetch headers", () => {
+  it("sends a User-Agent", async () => {
+    let seen: Headers | undefined;
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      seen = new Headers(init?.headers);
+      return new Response("ok");
+    }) as unknown as typeof fetch;
+    await makeWebTool({ fetchImpl }).execute({ op: "fetch", url: "https://api.github.com/x" }, ctx);
+    expect(seen?.get("user-agent")).toBe("imouto-driver");
   });
 });
 

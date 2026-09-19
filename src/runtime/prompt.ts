@@ -15,9 +15,11 @@ export function buildSystemPrompt(
   guides: string,
   memoryIndex: string,
   skillIndex: string,
+  platform = "",
 ): string {
   return [
     BASE,
+    ...(platform ? [platform] : []),
     "",
     ...(guides ? [guides, ""] : []),
     "Memory index (facts; use memory_read for details):",

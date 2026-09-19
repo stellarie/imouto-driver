@@ -1,91 +1,119 @@
-import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
-export type GateKind = "typecheck" | "lint" | "build" | "test";
+import { z } from "zod";
+import { runCommand } from "../platform/process.js";
+import type { ShellInfo } from "../platform/shell.js";
+
+export type GateStatus = "PASS" | "FAIL" | "SKIP";
+
 export interface GateResult {
-  kind: GateKind;
-  passed: boolean;
+  name: string;
+  status: GateStatus;
   output: string;
 }
 
-const pExec = promisify(exec);
+const PerPlatform = z.object({ windows: z.string().optional(), linux: z.string().optional(), darwin: z.string().optional() });
+const GateSchema = z.object({
+  name: z.string().min(1),
+  command: z.union([z.string().min(1), PerPlatform]),
+  timeoutSec: z.number().positive().optional(),
+});
+export const GatesFileSchema = z.object({ gates: z.array(GateSchema).min(1) });
+export type GatesFile = z.infer<typeof GatesFileSchema>;
 
-/** Canonical order: the machine checks cheapest-first, and tests run last. */
-const ORDER: GateKind[] = ["typecheck", "lint", "build", "test"];
+/** Canonical order for package.json detection: cheapest first, tests last. */
+const NPM_ORDER = ["typecheck", "lint", "build", "test"] as const;
+const DEFAULT_TIMEOUT_SEC = 900;
 
 export interface GateRunnerOptions {
-  /** Injectable script executor (defaults to `npm run <script>`); tests supply a deterministic one. */
+  /** Injectable executor for the package.json fallback; tests supply a deterministic one. */
   runScript?: (script: string, cwd: string) => Promise<{ ok: boolean; output: string }>;
+  platform?: NodeJS.Platform;
 }
 
-/** Runs deterministic, machine-checkable gates against a target repo, before any subjective review. */
+function platformKey(p: NodeJS.Platform): "windows" | "linux" | "darwin" {
+  return p === "win32" ? "windows" : p === "darwin" ? "darwin" : "linux";
+}
+
+/**
+ * Runs the project's deterministic gates. `<root>/.imouto/gates.json` wins;
+ * without it, package.json scripts are detected. Commands run through the
+ * selected shell and a timeout stops the whole process tree.
+ */
 export class GateRunner {
-  private depsReady = false;
+  private readonly platform: NodeJS.Platform;
 
   constructor(
     private readonly root: string,
+    private readonly shell: ShellInfo,
     private readonly opts: GateRunnerOptions = {},
-  ) {}
-
-  /** Install the target repo's deps once, before gates — so workers don't each self-install. */
-  private async ensureDeps(): Promise<void> {
-    if (this.depsReady) return;
-    this.depsReady = true;
-    if (this.opts.runScript) return; // injected executor (tests) — skip real install
-    if (existsSync(join(this.root, "package.json")) && !existsSync(join(this.root, "node_modules"))) {
-      try {
-        await pExec("npm install", { cwd: this.root, timeout: 300_000, maxBuffer: 10 * 1024 * 1024 });
-      } catch {
-        // ignore — the gates will report the resulting failures
-      }
-    }
+  ) {
+    this.platform = opts.platform ?? process.platform;
   }
 
-  private async scripts(): Promise<Record<string, string>> {
+  async run(): Promise<GateResult[]> {
+    const file = join(this.root, ".imouto", "gates.json");
+    if (existsSync(file)) return this.runConfigured(file);
+    return this.runNpm();
+  }
+
+  private async runConfigured(file: string): Promise<GateResult[]> {
+    let config: GatesFile;
     try {
-      const pkg = JSON.parse(await readFile(join(this.root, "package.json"), "utf8")) as {
-        scripts?: Record<string, string>;
-      };
-      return pkg.scripts ?? {};
-    } catch {
-      return {};
+      config = GatesFileSchema.parse(JSON.parse(readFileSync(file, "utf8")));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return [{ name: "gates.json", status: "FAIL", output: `invalid .imouto/gates.json: ${message}` }];
     }
-  }
-
-  /** Which gates the target repo actually supports, in canonical order. */
-  async detect(): Promise<GateKind[]> {
-    const s = await this.scripts();
-    return ORDER.filter((k) => k in s);
-  }
-
-  /** Run the requested gates (default: all detected) in canonical order. */
-  async run(kinds?: GateKind[]): Promise<GateResult[]> {
-    await this.ensureDeps();
-    const available = await this.detect();
-    const toRun = ORDER.filter((k) => available.includes(k) && (kinds ? kinds.includes(k) : true));
+    const key = platformKey(this.platform);
     const results: GateResult[] = [];
-    for (const kind of toRun) {
-      const { ok, output } = await this.exec(kind);
-      results.push({ kind, passed: ok, output });
+    for (const gate of config.gates) {
+      const command = typeof gate.command === "string" ? gate.command : gate.command[key];
+      if (!command) {
+        results.push({ name: gate.name, status: "SKIP", output: `no command for ${key}` });
+        continue;
+      }
+      const timeoutMs = (gate.timeoutSec ?? DEFAULT_TIMEOUT_SEC) * 1000;
+      const res = await runCommand(this.shell, command, { cwd: this.root, timeoutMs });
+      const output = [res.stdout, res.stderr].filter(Boolean).join("\n").trim();
+      const status: GateStatus = !res.timedOut && res.code === 0 ? "PASS" : "FAIL";
+      results.push({ name: gate.name, status, output: res.timedOut ? `${output}\n[timed out after ${timeoutMs} ms]`.trim() : output });
     }
     return results;
   }
 
-  private async exec(kind: GateKind): Promise<{ ok: boolean; output: string }> {
-    if (this.opts.runScript) return this.opts.runScript(kind, this.root);
+  private async runNpm(): Promise<GateResult[]> {
+    const scripts = this.npmScripts();
+    const present = NPM_ORDER.filter((k) => k in scripts);
+    if (present.length > 0 && !this.opts.runScript && !existsSync(join(this.root, "node_modules"))) {
+      // Install once, so the gates do not each fail on missing modules.
+      await runCommand(this.shell, "npm install", { cwd: this.root, timeoutMs: 300_000 });
+    }
+    const results: GateResult[] = [];
+    for (const name of present) {
+      const { ok, output } = this.opts.runScript
+        ? await this.opts.runScript(name, this.root)
+        : await this.npmRun(name);
+      results.push({ name, status: ok ? "PASS" : "FAIL", output });
+    }
+    return results;
+  }
+
+  private async npmRun(script: string): Promise<{ ok: boolean; output: string }> {
+    const res = await runCommand(this.shell, `npm run ${script} --silent`, {
+      cwd: this.root,
+      timeoutMs: DEFAULT_TIMEOUT_SEC * 1000,
+    });
+    const output = [res.stdout, res.stderr].filter(Boolean).join("\n").trim();
+    return { ok: !res.timedOut && res.code === 0, output };
+  }
+
+  private npmScripts(): Record<string, string> {
     try {
-      const { stdout, stderr } = await pExec(`npm run ${kind} --silent`, {
-        cwd: this.root,
-        timeout: 300_000,
-        maxBuffer: 10 * 1024 * 1024,
-      });
-      return { ok: true, output: [stdout, stderr].filter(Boolean).join("\n").trim() };
-    } catch (e) {
-      const err = e as { stdout?: string; stderr?: string; message?: string };
-      const output = [err.stdout, err.stderr].filter(Boolean).join("\n").trim();
-      return { ok: false, output: output || (err.message ?? "gate failed") };
+      const pkg = JSON.parse(readFileSync(join(this.root, "package.json"), "utf8")) as { scripts?: Record<string, string> };
+      return pkg.scripts ?? {};
+    } catch {
+      return {};
     }
   }
 }

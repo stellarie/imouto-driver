@@ -157,7 +157,7 @@ export function createMcpServer(driver: Driver, info: McpInfo): McpServer {
   server.registerTool(
     "run_gates",
     { description: "Run the deterministic gates (typecheck, lint, build, test) at the driver root.", inputSchema: {} },
-    guard(async () => text(await runGatesText(driver.root))),
+    guard(async () => text(await runGatesText(driver.root, driver.shell))),
   );
 
   // ── Search and memory curation: the orchestrator decides what becomes a fact ──
