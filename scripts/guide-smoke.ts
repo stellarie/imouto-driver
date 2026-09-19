@@ -37,6 +37,7 @@ writeFileSync(
 
 const driver = new Driver({
   root,
+  stateHome: join(root, "state-home"),
   llm: new DeepSeekClient({ apiKey }),
   memoryGlobalDir: join(root, "global-memory"),
   skillsGlobalDir: globalSkills,

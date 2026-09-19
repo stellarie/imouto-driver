@@ -20,6 +20,7 @@ const root = mkdtempSync(join(tmpdir(), "skills-smoke-"));
 for (const f of ["README.md", "package.json"]) copyFileSync(join(repo, f), join(root, f));
 const driver = new Driver({
   root,
+  stateHome: join(root, "state-home"),
   llm: new DeepSeekClient({ apiKey }),
   memoryGlobalDir: join(root, "global-memory"),
   skillsGlobalDir: join(root, "global-skills"),

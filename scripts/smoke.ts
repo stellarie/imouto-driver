@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { loadRepoEnv } from "../src/env.js";
 import { DeepSeekClient } from "../src/llm/deepseek.js";
 import { Driver } from "../src/runtime/driver.js";
@@ -13,7 +13,7 @@ if (!apiKey) {
   process.exit(1);
 }
 
-const driver = new Driver({ root, llm: new DeepSeekClient({ apiKey }) });
+const driver = new Driver({ root, stateHome: join(root, "state-home"), llm: new DeepSeekClient({ apiKey }) });
 const rec = driver.spawn({
   name: "smoke-root",
   goal: "Report a summary of the exported classes in src/runtime to the orchestrator.",

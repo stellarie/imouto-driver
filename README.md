@@ -24,6 +24,7 @@ Environment, from the shell or a `.env` file in the repo root:
 | `DEEPSEEK_API_KEY` | DeepSeek key. Without it, the driver runs an offline mock. |
 | `DEEPSEEK_MODEL` | Model id. Default `deepseek-flash`. |
 | `IMOUTO_ROOT` | Project directory. Default: the current directory. |
+| `IMOUTO_STATE_HOME` | Base directory for per-project state. Default `~/.imouto/projects`. |
 | `IMOUTO_MEMORY_DIR` | Global memory directory. Default `~/.imouto/memory`. |
 | `IMOUTO_SKILLS_DIR` | Global skills directory. Default `~/.imouto/skills`. |
 | `IMOUTO_GUIDE` | Global guidelines file. Default `~/.imouto/IMOUTO.md`. |
@@ -71,14 +72,15 @@ Each imouto's system prompt names its platform and shell, so it writes commands 
 
 ## Use from Claude Code
 
-Register the server once per project, from inside that project:
+Register the server once at user scope:
 
 ```sh
-claude mcp add imouto-driver -e IMOUTO_ROOT=<project path> -- <node path> <imouto-driver>/node_modules/tsx/dist/cli.mjs <imouto-driver>/src/mcp.ts
+claude mcp add -s user imouto-driver -- <node path> <imouto-driver>/node_modules/tsx/dist/cli.mjs <imouto-driver>/src/mcp.ts
 ```
 
 Point the command at `node` directly. On Windows, MCP clients often cannot start `.cmd` shims such as `corepack`.
-Add `.imouto/` to the project's `.git/info/exclude`.
+Call `set_root` when the orchestrator starts work on each project.
+The project `.imouto/` directory now holds only `gates.json`. Commit it, or add `.imouto/` to `.git/info/exclude`.
 
 Orchestrator tools:
 
@@ -128,7 +130,7 @@ Memory grows slowly, in three layers:
 2. **Candidates.** Imoutos call `memory_note` with evidence. Others add support with `supports`, or dispute a fact with `contests`.
 3. **Facts.** Only the orchestrator promotes. A candidate needs evidence from 2 episodes, or 1 executed proof.
 
-Imoutos see the fact index in their system prompt. Facts live as Markdown in `<root>/.imouto/memory/facts/` (project) and the global memory directory.
+Imoutos see the fact index in their system prompt. Project facts live in the project state directory. Global facts use the global memory directory.
 Edit a fact body at promotion when supporting evidence corrected the claim.
 
 Search is SQLite FTS5 with BM25 ranking. There are no embeddings.
@@ -140,7 +142,7 @@ A skill is a reusable procedure: `<name>/SKILL.md` with `name` and `description`
 - Imoutos see only the skill index in their system prompt. They load a body with `skill_read`.
 - A long skill keeps extra `.md` pages next to its `SKILL.md`. `skill_read` lists them under `Files:`, and `skill_read` with `file` loads one page.
 - Imoutos propose skills with `skill_draft`, with evidence of where the procedure worked. Only the orchestrator promotes.
-- Project skills live in `<root>/.imouto/skills/`; global skills in the global skills directory. A project skill wins on a name clash.
+- Project skills live in the project state directory. Global skills use the global skills directory. A project skill wins on a name clash.
 - `memory_consolidate` suggests a skill when 3 or more `procedure` facts share a tag.
 
 To add a skill by hand, create `<skills dir>/<name>/SKILL.md`:
@@ -173,7 +175,7 @@ Before every model call, the driver:
 ## Watch the imoutos think
 
 ```sh
-corepack pnpm watch                  # follow .imouto/events.jsonl live
+corepack pnpm watch                  # follow the project state directory live
 corepack pnpm watch --id imo-2       # one imouto
 corepack pnpm watch --no-reasoning   # hide reasoning
 corepack pnpm watch --from-start     # replay the whole log
@@ -197,7 +199,14 @@ Set `IMOUTO_ROOT` to watch a project other than the current directory.
 
 ## State
 
-Everything lives in `<root>/.imouto/`:
+Runtime state lives under `IMOUTO_STATE_HOME`, or `~/.imouto/projects` by default.
+Each project uses `<sanitized-final-segment>-<first-12-sha256-hex>` as its directory name.
+The hash uses the normalized absolute project root.
+
+On first load, the driver copies recognized legacy state from `<root>/.imouto/` when the new state directory does not exist.
+It never copies `search.db` or `gates.json`. The old files stay in place unchanged.
+
+Each project state directory contains:
 
 - `imoutos/<id>.json`: one record per imouto, with its full history.
 - `queues.json`: pending mail and the mail id counter.
@@ -215,7 +224,7 @@ After a restart, every imouto loads as tucked. Wake the ones you need.
 - `shell` runs with `cwd` at the imouto's scope but is not jailed. Imoutos have used it to leave their scope.
 - Two imoutos can edit the same file. Give them disjoint scopes.
 - Child budgets are not refunded.
-- `.imouto/events.jsonl` grows without rotation.
+- The project state directory's `events.jsonl` grows without rotation.
 - A fact or skill promoted mid-activation reaches an imouto at its next activation.
 
 ## Backlog

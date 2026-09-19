@@ -52,6 +52,7 @@ export function createMcpServer(driver: Driver, info: McpInfo): McpServer {
         JSON.stringify(
           {
             root: driver.root,
+            stateDir: driver.stateDirectory,
             model: info.model,
             live: info.live,
             maxDepth: driver.maxDepth,

@@ -20,6 +20,7 @@ const root = mkdtempSync(join(tmpdir(), "memory-smoke-"));
 for (const f of ["README.md", "package.json"]) copyFileSync(join(repo, f), join(root, f));
 const driver = new Driver({
   root,
+  stateHome: join(root, "state-home"),
   llm: new DeepSeekClient({ apiKey }),
   memoryGlobalDir: join(root, "global-memory"),
   skillsGlobalDir: join(root, "global-skills"),
@@ -58,7 +59,7 @@ try {
   if (ready) {
     driver.memory.project.promote(ready.id, { name: "test-command", description: "How to run this project's tests" });
     console.log("\n--- MEMORY.md");
-    console.log(readFileSync(join(root, ".imouto", "memory", "MEMORY.md"), "utf8"));
+    console.log(readFileSync(join(driver.stateDirectory, "memory", "MEMORY.md"), "utf8"));
     console.log(driver.memory.project.fact("test-command").body);
   }
   const used = driver.status().reduce((n, s) => n + s.used, 0);

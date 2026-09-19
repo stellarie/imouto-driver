@@ -1,16 +1,18 @@
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { DriverEvent } from "../src/runtime/events.js";
+import { defaultStateHome, stateDirFor } from "../src/runtime/state-dir.js";
 import { formatEvent } from "./watch-format.js";
 
-// Follow <root>/.imouto/events.jsonl and pretty-print it.
+// Follow the current project's events.jsonl and pretty-print it.
 const args = process.argv.slice(2);
 const fromStart = args.includes("--from-start");
 const showReasoning = !args.includes("--no-reasoning");
 const idIdx = args.indexOf("--id");
 const onlyId = idIdx >= 0 ? args[idIdx + 1] : undefined;
 const root = process.env.IMOUTO_ROOT || process.cwd();
-const path = join(root, ".imouto", "events.jsonl");
+const path = join(stateDirFor(root, defaultStateHome(process.env, homedir()), process.platform), "events.jsonl");
 const color = process.stdout.isTTY;
 
 let offset = -1;
