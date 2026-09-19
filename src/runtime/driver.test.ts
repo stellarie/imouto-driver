@@ -666,10 +666,10 @@ describe("stage 5a: cost, context, and handoff", () => {
 
   it("sends one wrap-up message at 90% spent", async () => {
     const llm = new RoutedMockLLMClient({
-      "imo-1": [{ ...tc("grep", { pattern: "x" }), usage: usageOf(9_000, 0, 100) }, final("report")],
+      "imo-1": [{ ...tc("grep", { pattern: "x" }), usage: usageOf(90_000, 0, 100) }, final("report")],
     });
     const d = mk(llm, { costWeights: { hit: 0.02, miss: 1, completion: 0.01, usdPerMillion: 0.15 } });
-    d.spawn(spawnArgs({ budget: 10_000 }));
+    d.spawn(spawnArgs({ budget: 100_000 }));
     expect((await d.wait("orchestrator", 2_000))[0]?.text).toBe("report");
     const second = llm.calls["imo-1"]?.[1]?.messages ?? [];
     const wraps = second.filter((m) => typeof m.content === "string" && m.content.startsWith("[driver] 90% of your budget or turn limit is spent."));
