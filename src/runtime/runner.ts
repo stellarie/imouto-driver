@@ -20,7 +20,7 @@ export const TOOL_RESULT_HISTORY_CHARS = 16_000;
 /** Output allowance used to project the cost of the next call. */
 export const COMPLETION_RESERVE = 4_000;
 const WRAP_UP =
-  "[driver] 90% of your budget is spent. Stop new work. Send your final report now: " +
+  "[driver] 90% of your budget or turn limit is spent. Stop new work. Send your final report now: " +
   "what is done, what is not, files changed, how you verified.";
 const COMPACT_SYSTEM =
   "You compress an agent's work log. Write a handoff summary of the work so far: goal, what is done " +
@@ -275,7 +275,8 @@ export async function runActivation(
     if (estimate() >= limits.contextLimitTokens) return stop("[context full]", "context full");
 
     // Budget guards.
-    if (!wrapUpSent && remaining(rec) <= 0.1 * rec.budget.total) {
+    const nearTurnCap = host.maxIterations > 1 && i >= Math.ceil(0.9 * host.maxIterations);
+    if (!wrapUpSent && (remaining(rec) <= 0.1 * rec.budget.total || nearTurnCap)) {
       push({ role: "user", content: WRAP_UP });
       wrapUpSent = true;
     }

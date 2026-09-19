@@ -592,8 +592,21 @@ describe("stage 5a: cost, context, and handoff", () => {
     d.spawn(spawnArgs({ budget: 10_000 }));
     expect((await d.wait("orchestrator", 2_000))[0]?.text).toBe("report");
     const second = llm.calls["imo-1"]?.[1]?.messages ?? [];
-    const wraps = second.filter((m) => typeof m.content === "string" && m.content.startsWith("[driver] 90% of your budget is spent."));
+    const wraps = second.filter((m) => typeof m.content === "string" && m.content.startsWith("[driver] 90% of your budget or turn limit is spent."));
     expect(wraps).toHaveLength(1);
+  });
+
+  it("sends the wrap-up message at 90% of the turn limit too", async () => {
+    const script = Array.from({ length: 9 }, () => tc("grep", { pattern: "x" }));
+    const llm = new RoutedMockLLMClient({ "imo-1": [...script, final("report")] });
+    const d = mk(llm, { maxIterations: 10 });
+    d.spawn(spawnArgs());
+    expect((await d.wait("orchestrator", 3_000))[0]?.text).toBe("report");
+    const calls = llm.calls["imo-1"] ?? [];
+    const hasWrap = (n: number) =>
+      (calls[n]?.messages ?? []).some((m) => typeof m.content === "string" && m.content.startsWith("[driver] 90%"));
+    expect(hasWrap(7)).toBe(false);
+    expect(hasWrap(8)).toBe(true);
   });
 
   it("does not start an unaffordable call and hands off state instead", async () => {

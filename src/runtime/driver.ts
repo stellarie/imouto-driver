@@ -115,7 +115,7 @@ export class Driver implements DriverApi {
     this.llm = opts.llm;
     this.maxDepth = opts.maxDepth ?? 3;
     this.maxConcurrentCalls = opts.maxConcurrentCalls ?? 4;
-    this.maxIterations = opts.maxIterations ?? 40;
+    this.maxIterations = opts.maxIterations ?? 100;
     this.defaultRootBudget = opts.defaultRootBudget ?? 4_000_000;
     this.semaphore = new Semaphore(this.maxConcurrentCalls);
     this.registry = opts.registry ?? defaultRegistry();
