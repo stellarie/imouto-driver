@@ -16,7 +16,7 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 let driver: Driver;
 async function connect(llm: RoutedMockLLMClient): Promise<Client> {
-  driver = new Driver({ root, llm, memoryGlobalDir: join(root, "global-memory"), skillsGlobalDir: join(root, "global-skills"), guideGlobalPath: join(root, "global-guide.md") });
+  driver = new Driver({ root, llm, stateHome: join(root, "state-home"), memoryGlobalDir: join(root, "global-memory"), skillsGlobalDir: join(root, "global-skills"), guideGlobalPath: join(root, "global-guide.md") });
   const server = createMcpServer(driver, { model: "mock", live: false });
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
   await server.connect(serverT);
@@ -28,6 +28,13 @@ async function connect(llm: RoutedMockLLMClient): Promise<Client> {
 const firstText = (r: unknown) => (r as { content: Array<{ text: string }> }).content[0]?.text;
 
 describe("MCP server", () => {
+  it("reports the absolute state directory in health", async () => {
+    const client = await connect(new RoutedMockLLMClient({}));
+    const health = JSON.parse(String(firstText(await client.callTool({ name: "health", arguments: {} }))));
+    expect(health.stateDir).toBe(driver.stateDirectory);
+    expect(health.stateDir).toMatch(/^([A-Za-z]:[\\/]|\/)/);
+  });
+
   it("exposes exactly the stage 1 tools", async () => {
     const client = await connect(new RoutedMockLLMClient({}));
     const names = (await client.listTools()).tools.map((t) => t.name).sort();

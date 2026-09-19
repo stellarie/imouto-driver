@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RoutedMockLLMClient } from "../llm/routed-mock.js";
@@ -8,6 +8,7 @@ import { Driver, type DriverOptions } from "./driver.js";
 import type { DriverEvent } from "./events.js";
 import type { ImoutoRecord } from "./imouto.js";
 import { prepareHistory } from "./runner.js";
+import { stateDirFor } from "./state-dir.js";
 
 let root: string;
 beforeEach(() => {
@@ -38,13 +39,14 @@ async function until(cond: () => boolean, ms = 3_000): Promise<void> {
 }
 
 function mk(llm: LLMClient, opts: Partial<DriverOptions> = {}): Driver {
-  return new Driver({ root, llm, memoryGlobalDir: join(root, "global-memory"), skillsGlobalDir: join(root, "global-skills"), guideGlobalPath: join(root, "global-guide.md"), ...opts });
+  return new Driver({ root, llm, stateHome: join(root, "state-home"), memoryGlobalDir: join(root, "global-memory"), skillsGlobalDir: join(root, "global-skills"), guideGlobalPath: join(root, "global-guide.md"), ...opts });
 }
+const testStateDir = () => stateDirFor(root, join(root, "state-home"), process.platform);
 const state = (d: Driver, id: string) => d.status().find((s) => s.id === id)?.state;
 const saved = (id: string) =>
-  JSON.parse(readFileSync(join(root, ".imouto", "imoutos", `${id}.json`), "utf8")) as ImoutoRecord;
+  JSON.parse(readFileSync(join(testStateDir(), "imoutos", `${id}.json`), "utf8")) as ImoutoRecord;
 const events = () =>
-  readFileSync(join(root, ".imouto", "events.jsonl"), "utf8")
+  readFileSync(join(testStateDir(), "events.jsonl"), "utf8")
     .trim()
     .split("\n")
     .map((l) => JSON.parse(l) as DriverEvent);
@@ -308,6 +310,84 @@ describe("concurrency", () => {
 });
 
 describe("status, root, and images", () => {
+  it("uses stateHome before IMOUTO_STATE_HOME", () => {
+    const configured = join(root, "configured-state");
+    const previous = process.env.IMOUTO_STATE_HOME;
+    process.env.IMOUTO_STATE_HOME = join(root, "environment-state");
+    try {
+      const d = mk(new RoutedMockLLMClient({}), { stateHome: configured });
+      expect(d.stateDirectory).toBe(stateDirFor(root, configured, process.platform));
+    } finally {
+      if (previous === undefined) delete process.env.IMOUTO_STATE_HOME;
+      else process.env.IMOUTO_STATE_HOME = previous;
+    }
+  });
+
+  it("writes no files under a new root's legacy state directory", () => {
+    mk(new RoutedMockLLMClient({}));
+    expect(existsSync(join(root, ".imouto"))).toBe(false);
+  });
+
+  it("copies legacy state without changing its source", () => {
+    const legacy = join(root, ".imouto");
+    const record = {
+      id: "imo-1", parent: "orchestrator", depth: 1, state: "idle", goal: "g", brief: "b", scope: root,
+      budget: { total: 100, used: 0, granted: 0 }, children: false, history: [], createdAt: "now", updatedAt: "now",
+    };
+    const files: Record<string, string> = {
+      "imoutos/imo-1.json": JSON.stringify(record),
+      "mail.jsonl": '{"id":1,"from":"orchestrator","to":"imo-1","text":"mail","at":"now"}\n',
+      "queues.json": '{"nextId":2,"queues":{}}', "events.jsonl": "",
+      "episodes/one.json": '{"id":"one","imouto":"imo-1","goal":"g","reply":"r","tools":{},"outcome":"idle"}',
+      "memory/fact.md": "fact", "skills/demo/SKILL.md": "skill", "search.db": "database", "gates.json": "gates",
+    };
+    for (const [relative, contents] of Object.entries(files)) {
+      const path = join(legacy, relative);
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(path, contents);
+    }
+
+    const d = mk(new RoutedMockLLMClient({}));
+    for (const relative of ["imoutos/imo-1.json", "mail.jsonl", "queues.json", "events.jsonl", "episodes/one.json", "memory/fact.md", "skills/demo/SKILL.md"]) {
+      expect(readFileSync(join(d.stateDirectory, relative), "utf8")).toContain(relative === "imoutos/imo-1.json" ? '"imo-1"' : "");
+    }
+    expect(existsSync(join(d.stateDirectory, "gates.json"))).toBe(false);
+    expect(existsSync(join(d.stateDirectory, "search.db"))).toBe(true);
+    expect(readFileSync(join(d.stateDirectory, "search.db")).equals(Buffer.from("database"))).toBe(false);
+    for (const [relative, contents] of Object.entries(files)) expect(readFileSync(join(legacy, relative), "utf8")).toBe(contents);
+    expect(d.status().map((entry) => entry.id)).toEqual(["imo-1"]);
+    const last = readFileSync(join(d.stateDirectory, "events.jsonl"), "utf8").trim().split("\n").at(-1);
+    expect(JSON.parse(last ?? "{}")).toMatchObject({
+      imouto: "orchestrator", type: "state", data: { reason: `migrated from ${legacy}` },
+    });
+  });
+
+  it("copies legacy state only once", () => {
+    const legacy = join(root, ".imouto");
+    mkdirSync(join(legacy, "memory"), { recursive: true });
+    writeFileSync(join(legacy, "memory", "old.md"), "old");
+    writeFileSync(join(legacy, "events.jsonl"), "");
+    const first = mk(new RoutedMockLLMClient({}));
+    writeFileSync(join(first.stateDirectory, "memory", "new.md"), "new");
+    const second = mk(new RoutedMockLLMClient({}));
+    expect(readFileSync(join(second.stateDirectory, "memory", "new.md"), "utf8")).toBe("new");
+    const migrations = readFileSync(join(second.stateDirectory, "events.jsonl"), "utf8")
+      .trim().split("\n").map((line) => JSON.parse(line) as DriverEvent)
+      .filter((event) => event.type === "state" && event.data.to === "migrated");
+    expect(migrations).toHaveLength(1);
+  });
+
+  it("does not copy legacy state when the state directory exists", () => {
+    const stateDir = testStateDir();
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(join(stateDir, "sentinel.txt"), "keep");
+    mkdirSync(join(root, ".imouto", "memory"), { recursive: true });
+    writeFileSync(join(root, ".imouto", "memory", "legacy.md"), "legacy");
+    const d = mk(new RoutedMockLLMClient({}));
+    expect(readFileSync(join(d.stateDirectory, "sentinel.txt"), "utf8")).toBe("keep");
+    expect(existsSync(join(d.stateDirectory, "memory", "legacy.md"))).toBe(false);
+  });
+
   it("lists state, depth, used, remaining, and pending mail", async () => {
     const d = mk(new RoutedMockLLMClient({ "imo-1": [final("x")] }));
     d.spawn(spawnArgs({ budget: 100_000, name: "Akari" }));
@@ -327,8 +407,8 @@ describe("status, root, and images", () => {
     const llm = new RoutedMockLLMClient({});
     const g = join(root, "global-memory");
     const gs = join(root, "global-skills");
-    expect(() => new Driver({ root: "C:UsersStellachibipop", llm, memoryGlobalDir: g, skillsGlobalDir: gs, guideGlobalPath: join(root, "global-guide.md") })).toThrow("root must be an absolute path");
-    expect(() => new Driver({ root: join(root, "nope"), llm, memoryGlobalDir: g, skillsGlobalDir: gs, guideGlobalPath: join(root, "global-guide.md") })).toThrow("root not found");
+    expect(() => new Driver({ root: "C:UsersStellachibipop", llm, stateHome: join(root, "state-home"), memoryGlobalDir: g, skillsGlobalDir: gs, guideGlobalPath: join(root, "global-guide.md") })).toThrow("root must be an absolute path");
+    expect(() => new Driver({ root: join(root, "nope"), llm, stateHome: join(root, "state-home"), memoryGlobalDir: g, skillsGlobalDir: gs, guideGlobalPath: join(root, "global-guide.md") })).toThrow("root not found");
     expect(() => mk(llm).setRoot("relative/dir")).toThrow("root must be an absolute path");
   });
 
@@ -418,12 +498,12 @@ describe("episodes and memory wiring", () => {
     await until(() => state(d, "imo-1") === "idle");
     d.send("orchestrator", "imo-1", "again");
     await d.wait("orchestrator", 2_000);
-    await until(() => existsSync(join(root, ".imouto", "episodes", "imo-1-a2.json")));
-    const ep = JSON.parse(readFileSync(join(root, ".imouto", "episodes", "imo-1-a1.json"), "utf8"));
+    await until(() => existsSync(join(d.stateDirectory, "episodes", "imo-1-a2.json")));
+    const ep = JSON.parse(readFileSync(join(d.stateDirectory, "episodes", "imo-1-a1.json"), "utf8"));
     expect(ep).toMatchObject({ id: "imo-1-a1", imouto: "imo-1", name: "Rin", goal: "g", trigger: "spawn", outcome: "idle: replied", tools: { grep: 1 }, tokens: 60 });
     expect(ep.reply).toHaveLength(1_000);
     expect(ep.startedAt <= ep.endedAt).toBe(true);
-    const ep2 = JSON.parse(readFileSync(join(root, ".imouto", "episodes", "imo-1-a2.json"), "utf8"));
+    const ep2 = JSON.parse(readFileSync(join(d.stateDirectory, "episodes", "imo-1-a2.json"), "utf8"));
     expect(ep2).toMatchObject({ trigger: "mail", reply: "second" });
   });
 
@@ -449,7 +529,7 @@ describe("episodes and memory wiring", () => {
     await d.wait("orchestrator", 2_000);
     await until(() => state(d, "imo-1") === "idle");
     d.memory.project.note({ title: "t", claim: "wombat facts", evidence: { episode: "orchestrator", imouto: "orchestrator", text: "x", executed: true } });
-    rmSync(join(root, ".imouto", "search.db"), { force: true });
+    rmSync(join(d.stateDirectory, "search.db"), { force: true });
     const d2 = mk(new RoutedMockLLMClient({}));
     expect(d2.search.search("quokka", { kinds: ["mail"] })).toHaveLength(1);
     expect(d2.search.search("quokka", { kinds: ["episode"] })).toHaveLength(1);
@@ -502,7 +582,7 @@ describe("skills wiring", () => {
     expect(llm.calls["imo-1"]?.[0]?.system).toContain("- list-scripts [project] — List package scripts");
 
     await until(() => state(d, "imo-1") === "idle");
-    rmSync(join(root, ".imouto", "search.db"), { force: true });
+    rmSync(join(d.stateDirectory, "search.db"), { force: true });
     const d2 = mk(new RoutedMockLLMClient({}));
     expect(d2.search.search("script", { kinds: ["skill"] })).toHaveLength(1);
   });
@@ -586,10 +666,10 @@ describe("stage 5a: cost, context, and handoff", () => {
 
   it("sends one wrap-up message at 90% spent", async () => {
     const llm = new RoutedMockLLMClient({
-      "imo-1": [{ ...tc("grep", { pattern: "x" }), usage: usageOf(9_000, 0, 100) }, final("report")],
+      "imo-1": [{ ...tc("grep", { pattern: "x" }), usage: usageOf(90_000, 0, 100) }, final("report")],
     });
     const d = mk(llm, { costWeights: { hit: 0.02, miss: 1, completion: 0.01, usdPerMillion: 0.15 } });
-    d.spawn(spawnArgs({ budget: 10_000 }));
+    d.spawn(spawnArgs({ budget: 100_000 }));
     expect((await d.wait("orchestrator", 2_000))[0]?.text).toBe("report");
     const second = llm.calls["imo-1"]?.[1]?.messages ?? [];
     const wraps = second.filter((m) => typeof m.content === "string" && m.content.startsWith("[driver] 90% of your budget or turn limit is spent."));

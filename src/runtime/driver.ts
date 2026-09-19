@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { LLMClient } from "../llm/types.js";
 import { consolidate, formatReport } from "../memory/consolidate.js";
@@ -20,6 +21,7 @@ import { remaining, type ImoutoRecord, type ImoutoState } from "./imouto.js";
 import { Mailbox, ORCHESTRATOR, type Mail } from "./mailbox.js";
 import { COMPLETION_RESERVE, runActivation, type Activity, type ContextLimits, type RunnerHost } from "./runner.js";
 import { Semaphore } from "./semaphore.js";
+import { defaultStateHome, migrateLegacyState, stateDirFor } from "./state-dir.js";
 import { ImoutoStore } from "./store.js";
 
 export interface DriverOptions {
@@ -38,6 +40,8 @@ export interface DriverOptions {
   skillsGlobalDir?: string;
   /** Global IMOUTO.md. Default: IMOUTO_GUIDE or ~/.imouto/IMOUTO.md. */
   guideGlobalPath?: string;
+  /** Base directory for per-project state. Default: IMOUTO_STATE_HOME or ~/.imouto/projects. */
+  stateHome?: string;
   /** Cost units per token kind; default follows deepseek-flash prices. */
   costWeights?: CostWeights;
   /** Compact history at this estimated prompt size. Default 600000. */
@@ -99,6 +103,7 @@ export class Driver implements DriverApi {
   private readonly memoryGlobalDir: string;
   private readonly skillsGlobalDir: string;
   private readonly guideGlobalPath: string;
+  private readonly stateHome: string;
   private readonly costWeights: CostWeights;
   private readonly limits: ContextLimits;
   private readonly activity = new Map<string, Activity>();
@@ -126,6 +131,7 @@ export class Driver implements DriverApi {
     this.memoryGlobalDir = opts.memoryGlobalDir ?? defaultGlobalMemoryDir();
     this.skillsGlobalDir = opts.skillsGlobalDir ?? defaultGlobalSkillsDir();
     this.guideGlobalPath = opts.guideGlobalPath ?? defaultGlobalGuidePath();
+    this.stateHome = opts.stateHome ?? defaultStateHome(process.env, homedir());
     this.costWeights = opts.costWeights ?? DEFAULT_WEIGHTS;
     this.shell = opts.shell ?? selectShell(realProbe());
     this.limits = {
@@ -142,6 +148,10 @@ export class Driver implements DriverApi {
 
   get eventsPath(): string {
     return this.events.path;
+  }
+
+  get stateDirectory(): string {
+    return this.stateDir;
   }
 
   get memory(): Memory {
@@ -300,10 +310,18 @@ export class Driver implements DriverApi {
     // "C:foo" is drive-relative on Windows; a mangled path must not become a silent new root.
     if (!isAbsolute(root)) throw new Error(`root must be an absolute path: ${root}`);
     if (!existsSync(root) || !statSync(root).isDirectory()) throw new Error(`root not found: ${root}`);
-    const stateDir = join(root, ".imouto");
+    const stateDir = stateDirFor(root, this.stateHome, process.platform);
+    const migrated = migrateLegacyState(root, stateDir);
     this.rootDir = root;
     this.stateDir = stateDir;
     this.events = new EventLog(stateDir);
+    if (migrated) {
+      this.events.emit("orchestrator", "state", {
+        from: null,
+        to: "migrated",
+        reason: `migrated from ${join(root, ".imouto")}`,
+      });
+    }
     this.store = new ImoutoStore(stateDir);
     this.records = new Map(this.store.loadAll().map((r) => [r.id, r]));
     this.tuckFlags.clear();
