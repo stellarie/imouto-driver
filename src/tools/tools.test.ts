@@ -113,3 +113,22 @@ describe("run_gates", () => {
     expect(res.output).toBe("typecheck: PASS\ntypecheck output\n\ntest: FAIL\ntest output");
   });
 });
+
+describe("fs read ranges", () => {
+  const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
+
+  it("returns numbered lines from offset with a footer when the file continues", async () => {
+    writeFileSync(join(root, "f.txt"), lines(50));
+    const res = await fsTool.execute({ op: "read", path: "f.txt", offset: 10, limit: 3 }, ctx);
+    expect(res.output).toBe("10: line 10\n11: line 11\n12: line 12\n[lines 10-12 of 50; pass offset to read more]");
+  });
+
+  it("reads at most 400 lines by default and needs no footer for a short whole file", async () => {
+    writeFileSync(join(root, "big.txt"), lines(1_000));
+    const big = String((await fsTool.execute({ op: "read", path: "big.txt" }, ctx)).output).split("\n");
+    expect(big).toHaveLength(401);
+    expect(big.at(-1)).toBe("[lines 1-400 of 1000; pass offset to read more]");
+    writeFileSync(join(root, "small.txt"), "a\r\nb\r\n");
+    expect((await fsTool.execute({ op: "read", path: "small.txt" }, ctx)).output).toBe("1: a\n2: b");
+  });
+});

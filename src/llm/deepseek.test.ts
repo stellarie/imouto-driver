@@ -107,6 +107,37 @@ describe("DeepSeekClient", () => {
     const res = await client(impl).chat({ messages: [] });
     expect(res.reasoning).toBe("r");
     expect(res.toolCalls).toEqual([{ id: "1", name: "fs", arguments: {} }]);
-    expect(res.usage).toEqual({ prompt: 10, completion: 2 });
+    expect(res.usage).toEqual({ prompt: 10, completion: 2, promptHit: 0, promptMiss: 10 });
+  });
+
+  it("maps the cache hit and miss split", async () => {
+    const { impl } = fakeFetch([
+      {
+        status: 200,
+        json: {
+          choices: [{ message: { content: "c" } }],
+          usage: { prompt_tokens: 1_000, completion_tokens: 5, prompt_cache_hit_tokens: 900, prompt_cache_miss_tokens: 100 },
+        },
+      },
+    ]);
+    expect((await client(impl).chat({ messages: [] })).usage).toEqual({
+      prompt: 1_000,
+      completion: 5,
+      promptHit: 900,
+      promptMiss: 100,
+    });
+  });
+
+  it("aborts a call past callTimeoutMs and retries it", async () => {
+    let calls = 0;
+    const hang = ((_url: string, init: RequestInit) => {
+      calls++;
+      return new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    }) as unknown as typeof fetch;
+    const c = new DeepSeekClient({ apiKey: "k", fetchImpl: hang, sleep: async () => {}, callTimeoutMs: 20 });
+    await expect(c.chat({ messages: [] })).rejects.toThrow("aborted");
+    expect(calls).toBe(3);
   });
 });

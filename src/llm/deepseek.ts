@@ -20,7 +20,12 @@ interface ApiMessage {
 }
 interface DeepSeekCompletion {
   choices: Array<{ message?: ApiMessage }>;
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    prompt_cache_hit_tokens?: number;
+    prompt_cache_miss_tokens?: number;
+  };
 }
 
 export type ReasoningEffort = "low" | "high" | "max";
@@ -34,6 +39,8 @@ export interface DeepSeekClientOptions {
   reasoningEffort?: ReasoningEffort;
   /** Injectable backoff; tests pass a no-op. */
   sleep?: (ms: number) => Promise<void>;
+  /** Abort one HTTP call after this long; counts as a network failure. Default 180000. */
+  callTimeoutMs?: number;
 }
 
 /** Backoff before retry 1 and retry 2. */
@@ -90,6 +97,7 @@ export class DeepSeekClient implements LLMClient {
   private readonly thinking: boolean;
   private readonly reasoningEffort: ReasoningEffort;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly callTimeoutMs: number;
 
   constructor(opts: DeepSeekClientOptions) {
     this.apiKey = opts.apiKey;
@@ -99,6 +107,7 @@ export class DeepSeekClient implements LLMClient {
     this.thinking = opts.thinking ?? true;
     this.reasoningEffort = opts.reasoningEffort ?? "high";
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.callTimeoutMs = opts.callTimeoutMs ?? 180_000;
   }
 
   async chat(req: ChatRequest): Promise<LLMResponse> {
@@ -128,6 +137,7 @@ export class DeepSeekClient implements LLMClient {
           method: "POST",
           headers: { "content-type": "application/json", authorization: `Bearer ${this.apiKey}` },
           body: payload,
+          signal: AbortSignal.timeout(this.callTimeoutMs),
         });
       } catch (e) {
         // Network failure (connect timeout, reset).
@@ -145,9 +155,14 @@ export class DeepSeekClient implements LLMClient {
       }
       const data = (await res.json()) as DeepSeekCompletion;
       const msg = data.choices[0]?.message;
-      const usage = data.usage
-        ? { prompt: data.usage.prompt_tokens ?? 0, completion: data.usage.completion_tokens ?? 0 }
-        : undefined;
+      const u = data.usage;
+      let usage: LLMResponse["usage"];
+      if (u) {
+        const prompt = u.prompt_tokens ?? 0;
+        const promptHit = u.prompt_cache_hit_tokens ?? 0;
+        const promptMiss = u.prompt_cache_miss_tokens ?? prompt - promptHit;
+        usage = { prompt, completion: u.completion_tokens ?? 0, promptHit, promptMiss };
+      }
       return {
         content: msg?.content ?? "",
         reasoning: msg?.reasoning_content,

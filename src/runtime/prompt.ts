@@ -31,5 +31,6 @@ export function buildSystemPrompt(
     `goal: ${rec.goal}`,
     `brief: ${rec.brief}`,
     `scope: ${rec.scope}`,
+    ...(rec.children === true ? [] : ["You cannot spawn children. Do the work yourself."]),
   ].join("\n");
 }

@@ -74,11 +74,11 @@ describe("spawn and reply", () => {
 
   it("creates a child at depth + 1 through the spawn tool", async () => {
     const llm = new RoutedMockLLMClient({
-      "imo-1": [tc("spawn", spawnArgs({ budget: 1_000 })), final("parent done")],
+      "imo-1": [tc("spawn", spawnArgs({ budget: 50_000 })), final("parent done")],
       "imo-2": [final("child done")],
     });
     const d = mk(llm);
-    d.spawn(spawnArgs());
+    d.spawn(spawnArgs({ children: true }));
     await until(() => state(d, "imo-2") === "idle");
     const child = d.status().find((s) => s.id === "imo-2");
     expect(child).toMatchObject({ parent: "imo-1", depth: 2 });
@@ -88,10 +88,10 @@ describe("spawn and reply", () => {
 });
 
 describe("spawn rules", () => {
-  async function spawnError(args: Record<string, unknown>, opts: Partial<DriverOptions> = {}, rootBudget = 1_000) {
+  async function spawnError(args: Record<string, unknown>, opts: Partial<DriverOptions> = {}, rootBudget = 100_000) {
     const llm = new RoutedMockLLMClient({ "imo-1": [tc("spawn", spawnArgs(args)), final("x")] });
     const d = mk(llm, opts);
-    d.spawn(spawnArgs({ budget: rootBudget }));
+    d.spawn(spawnArgs({ budget: rootBudget, children: true }));
     await until(() => (llm.calls["imo-1"]?.length ?? 0) >= 2);
     const tool = llm.calls["imo-1"]?.[1]?.messages.find((m) => m.role === "tool");
     return { d, text: String(tool?.content) };
@@ -104,7 +104,7 @@ describe("spawn rules", () => {
   });
 
   it("rejects a child budget above the parent's remaining budget", async () => {
-    const { text } = await spawnError({ budget: 5_000 });
+    const { text } = await spawnError({ budget: 500_000 });
     expect(text).toContain("exceeds remaining");
   });
 
@@ -120,14 +120,14 @@ describe("spawn rules", () => {
 
   it("adds a child budget to the parent's granted total", async () => {
     const llm = new RoutedMockLLMClient({
-      "imo-1": [tc("spawn", spawnArgs({ budget: 300 })), final("x")],
+      "imo-1": [tc("spawn", spawnArgs({ budget: 30_000 })), final("x")],
       "imo-2": [final("y")],
     });
     const d = mk(llm);
-    d.spawn(spawnArgs({ budget: 1_000 }));
+    d.spawn(spawnArgs({ budget: 100_000, children: true }));
     await until(() => state(d, "imo-1") === "idle" && state(d, "imo-2") === "idle");
-    expect(saved("imo-1").budget.granted).toBe(300);
-    expect(d.status().find((s) => s.id === "imo-1")?.remaining).toBe(1_000 - 30 - 300);
+    expect(saved("imo-1").budget.granted).toBe(30_000);
+    expect(d.status().find((s) => s.id === "imo-1")?.remaining).toBe(100_000 - 60 - 30_000);
   });
 });
 
@@ -225,9 +225,11 @@ describe("mail, tuck, and wake", () => {
     d.spawn(spawnArgs({ budget: 20 }));
     await d.wait("orchestrator", 2_000);
     await until(() => state(d, "imo-1") === "tucked");
+    // The activation releases one tick after the state flips.
+    await new Promise((r) => setTimeout(r, 20));
     expect(() => d.wake("imo-1")).toThrow("budget exhausted");
-    d.wake("imo-1", undefined, 1_000);
-    expect(saved("imo-1").budget.total).toBe(1_020);
+    d.wake("imo-1", undefined, 50_000);
+    expect(saved("imo-1").budget.total).toBe(50_020);
     expect((await d.wait("orchestrator", 2_000))[0]?.text).toBe("revived");
   });
 
@@ -289,11 +291,11 @@ describe("concurrency", () => {
   it("does not let parents blocked in wait starve their children", async () => {
     const scripts: Record<string, LLMResponse[]> = {};
     for (let p = 1; p <= 4; p++) {
-      scripts[`imo-${p}`] = [tc("spawn", spawnArgs({ budget: 100 })), tc("wait", { timeoutSec: 5 }), final(`parent ${p} done`)];
+      scripts[`imo-${p}`] = [tc("spawn", spawnArgs({ budget: 50_000 })), tc("wait", { timeoutSec: 5 }), final(`parent ${p} done`)];
     }
     for (let c = 5; c <= 8; c++) scripts[`imo-${c}`] = [final(`child ${c}`)];
     const d = mk(new RoutedMockLLMClient(scripts), { maxConcurrentCalls: 1 });
-    for (let p = 0; p < 4; p++) d.spawn(spawnArgs());
+    for (let p = 0; p < 4; p++) d.spawn(spawnArgs({ children: true }));
     const t0 = Date.now();
     const got: string[] = [];
     while (got.filter((t) => t.startsWith("parent")).length < 4) {
@@ -308,15 +310,15 @@ describe("concurrency", () => {
 describe("status, root, and images", () => {
   it("lists state, depth, used, remaining, and pending mail", async () => {
     const d = mk(new RoutedMockLLMClient({ "imo-1": [final("x")] }));
-    d.spawn(spawnArgs({ budget: 1_000, name: "Akari" }));
+    d.spawn(spawnArgs({ budget: 100_000, name: "Akari" }));
     await until(() => state(d, "imo-1") === "idle");
     expect(d.status()[0]).toMatchObject({
       id: "imo-1",
       name: "Akari",
       state: "idle",
       depth: 1,
-      used: 15,
-      remaining: 985,
+      used: 30,
+      remaining: 99_970,
       mailPending: 0,
     });
   });
@@ -418,7 +420,7 @@ describe("episodes and memory wiring", () => {
     await d.wait("orchestrator", 2_000);
     await until(() => existsSync(join(root, ".imouto", "episodes", "imo-1-a2.json")));
     const ep = JSON.parse(readFileSync(join(root, ".imouto", "episodes", "imo-1-a1.json"), "utf8"));
-    expect(ep).toMatchObject({ id: "imo-1-a1", imouto: "imo-1", name: "Rin", goal: "g", trigger: "spawn", outcome: "idle: replied", tools: { grep: 1 }, tokens: 30 });
+    expect(ep).toMatchObject({ id: "imo-1-a1", imouto: "imo-1", name: "Rin", goal: "g", trigger: "spawn", outcome: "idle: replied", tools: { grep: 1 }, tokens: 60 });
     expect(ep.reply).toHaveLength(1_000);
     expect(ep.startedAt <= ep.endedAt).toBe(true);
     const ep2 = JSON.parse(readFileSync(join(root, ".imouto", "episodes", "imo-1-a2.json"), "utf8"));
@@ -503,5 +505,155 @@ describe("skills wiring", () => {
     rmSync(join(root, ".imouto", "search.db"), { force: true });
     const d2 = mk(new RoutedMockLLMClient({}));
     expect(d2.search.search("script", { kinds: ["skill"] })).toHaveLength(1);
+  });
+});
+
+describe("stage 5a: cost, context, and handoff", () => {
+  const usageOf = (prompt: number, hit: number, completion: number) => ({
+    prompt,
+    completion,
+    promptHit: hit,
+    promptMiss: prompt - hit,
+  });
+
+  it("charges cost units with cache hits at their real weight, and shows USD", async () => {
+    const d = mk(
+      new RoutedMockLLMClient({
+        "imo-1": [{ content: "done", toolCalls: [], usage: usageOf(1_000, 900, 100) }],
+      }),
+    );
+    d.spawn(spawnArgs({ budget: 100_000 }));
+    await d.wait("orchestrator", 2_000);
+    await until(() => state(d, "imo-1") === "idle");
+    // 100 miss + 900 * 0.02 hit + 100 * 4 output = 518
+    const s = d.status()[0];
+    expect(s?.used).toBe(518);
+    expect(s?.usd).toBeCloseTo((518 / 1e6) * 0.15, 10);
+    const u = events().find((e) => e.type === "usage");
+    expect(u?.data).toMatchObject({ hit: 900, miss: 100, completion: 100, cost: 518, used: 518 });
+    expect(saved("imo-1").usage).toEqual({ hit: 900, miss: 100, completion: 100 });
+  });
+
+  it("stores long tool results cut, with a marker", async () => {
+    writeFileSync(join(root, "wide.txt"), "w".repeat(30_000));
+    const llm = new RoutedMockLLMClient({ "imo-1": [tc("fs", { op: "read", path: "wide.txt" }), final("ok")] });
+    const d = mk(llm);
+    d.spawn(spawnArgs());
+    await d.wait("orchestrator", 2_000);
+    const tool = llm.calls["imo-1"]?.[1]?.messages.find((m) => m.role === "tool");
+    expect(String(tool?.content)).toMatch(/\[truncated: \d+ chars omitted; narrow the read or grep\]$/);
+    expect(String(tool?.content).length).toBeLessThan(16_100);
+  });
+
+  it("compacts at the threshold, keeps the goal and a clean tail, and records it", async () => {
+    const llm = new RoutedMockLLMClient({
+      "imo-1": [
+        { ...tc("grep", { pattern: "a" }), usage: usageOf(900, 0, 10) },
+        { ...tc("grep", { pattern: "b" }), usage: usageOf(950, 0, 10) },
+        { content: "summary: grepped a and b", toolCalls: [], usage: usageOf(100, 0, 50) },
+        final("after compaction"),
+      ],
+    });
+    const d = mk(llm, { compactAtTokens: 800, keepRecentMessages: 2 });
+    d.spawn(spawnArgs());
+    expect((await d.wait("orchestrator", 2_000))[0]?.text).toBe("after compaction");
+    const calls = llm.calls["imo-1"] ?? [];
+    const summaryCall = calls.find((c) => (c.system ?? "").startsWith("You compress"));
+    expect(summaryCall?.tools).toBeUndefined();
+    const last = calls.at(-1)?.messages ?? [];
+    expect(last[0]).toMatchObject({ role: "user", content: "g" });
+    expect(last[1]).toMatchObject({ role: "user", content: "[summary of earlier work]\nsummary: grepped a and b" });
+    expect(last[2]?.role).not.toBe("tool");
+    expect(events().some((e) => e.type === "state" && String(e.data.reason).startsWith("compacted"))).toBe(true);
+  });
+
+  it("compacts a woken imouto whose history is over the threshold before its first call", async () => {
+    const llm = new RoutedMockLLMClient({
+      "imo-1": [
+        { content: "first", toolCalls: [], usage: usageOf(700_000, 0, 10) },
+        { content: "summary", toolCalls: [], usage: usageOf(100, 0, 10) },
+        final("second"),
+      ],
+    });
+    const d = mk(llm, { keepRecentMessages: 1, defaultRootBudget: 10_000_000 });
+    d.spawn(spawnArgs());
+    await d.wait("orchestrator", 2_000);
+    await until(() => state(d, "imo-1") === "idle");
+    d.send("orchestrator", "imo-1", "again");
+    expect((await d.wait("orchestrator", 2_000))[0]?.text).toBe("second");
+    expect(llm.calls["imo-1"]?.[1]?.system).toMatch(/^You compress/);
+  });
+
+  it("sends one wrap-up message at 90% spent", async () => {
+    const llm = new RoutedMockLLMClient({
+      "imo-1": [{ ...tc("grep", { pattern: "x" }), usage: usageOf(9_000, 0, 100) }, final("report")],
+    });
+    const d = mk(llm, { costWeights: { hit: 0.02, miss: 1, completion: 0.01, usdPerMillion: 0.15 } });
+    d.spawn(spawnArgs({ budget: 10_000 }));
+    expect((await d.wait("orchestrator", 2_000))[0]?.text).toBe("report");
+    const second = llm.calls["imo-1"]?.[1]?.messages ?? [];
+    const wraps = second.filter((m) => typeof m.content === "string" && m.content.startsWith("[driver] 90% of your budget is spent."));
+    expect(wraps).toHaveLength(1);
+  });
+
+  it("does not start an unaffordable call and hands off state instead", async () => {
+    const llm = new RoutedMockLLMClient({ "imo-1": [final("never")] });
+    const d = mk(llm);
+    d.spawn(spawnArgs({ budget: 20 }));
+    const text = (await d.wait("orchestrator", 2_000))[0]?.text ?? "";
+    expect(llm.calls["imo-1"]).toBeUndefined();
+    expect(text).toMatch(/^\[budget exhausted\]\nlast text: /);
+    expect(text).toContain("last tool calls: (none)");
+    expect(text).toContain("diff --stat:\n(not a git repo)");
+    await until(() => state(d, "imo-1") === "tucked");
+  });
+
+  it("delivers mail that arrives mid-run before the next call", async () => {
+    const llm = new RoutedMockLLMClient({ "imo-1": [tc("grep", { pattern: "x" }), final("done")] }, 40);
+    const d = mk(llm);
+    d.spawn(spawnArgs());
+    await until(() => llm.inFlight === 1);
+    d.send("orchestrator", "imo-1", "also check y");
+    expect((await d.wait("orchestrator", 2_000))[0]?.text).toBe("done");
+    const second = llm.calls["imo-1"]?.[1]?.messages ?? [];
+    expect(second.some((m) => m.content === "[mail from orchestrator] also check y")).toBe(true);
+    expect(llm.calls["imo-1"]).toHaveLength(2);
+  });
+
+  it("shows calling and waiting-for-slot activity in status", async () => {
+    const llm = new RoutedMockLLMClient({ "imo-1": [final("a")], "imo-2": [final("b")] }, 60);
+    const d = mk(llm, { maxConcurrentCalls: 1 });
+    d.spawn(spawnArgs());
+    d.spawn(spawnArgs());
+    await until(() => llm.inFlight === 1);
+    const acts = d.status().map((s) => s.activity).sort();
+    expect(acts[0]).toMatch(/^calling \d+s$/);
+    expect(acts[1]).toBe("waiting for slot");
+    const got: string[] = [];
+    while (got.length < 2) got.push(...(await d.wait("orchestrator", 2_000)).map((m) => m.text));
+    expect(d.status().every((s) => s.activity === "-")).toBe(true);
+  });
+
+  it("cancels a pending tuck on wake instead of throwing", async () => {
+    const llm = new RoutedMockLLMClient({ "imo-1": [tc("grep", { pattern: "x" }), final("kept going")] }, 40);
+    const d = mk(llm);
+    d.spawn(spawnArgs());
+    await until(() => llm.inFlight === 1);
+    expect(d.tuck("imo-1")).toBe("requested");
+    expect(d.wake("imo-1")).toBe("resumed");
+    expect((await d.wait("orchestrator", 2_000))[0]?.text).toBe("kept going");
+    await until(() => state(d, "imo-1") === "idle");
+  });
+
+  it("refuses spawn for an imouto without children, and hides the tool", async () => {
+    const llm = new RoutedMockLLMClient({ "imo-1": [tc("spawn", spawnArgs({ budget: 50_000 })), final("x")] });
+    const d = mk(llm);
+    d.spawn(spawnArgs());
+    await d.wait("orchestrator", 2_000);
+    const tool = llm.calls["imo-1"]?.[1]?.messages.find((m) => m.role === "tool");
+    expect(tool?.content).toBe("ERROR: children not allowed for this imouto");
+    expect((llm.calls["imo-1"]?.[0]?.tools ?? []).map((t) => t.name)).not.toContain("spawn");
+    expect(llm.calls["imo-1"]?.[0]?.system).toContain("You cannot spawn children.");
+    expect(d.status()).toHaveLength(1);
   });
 });
