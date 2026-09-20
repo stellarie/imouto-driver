@@ -35,6 +35,22 @@ describe("buildSystemPrompt", () => {
     expect(p.indexOf(line)).toBeLessThan(p.indexOf("Memory index"));
   });
 
+  it("shows exact execution context and the concise report contract", () => {
+    const p = buildSystemPrompt(
+      rec,
+      "",
+      "(no facts yet)",
+      "(no skills yet)",
+      "platform: linux; shell: bash (/bin/bash)",
+      "/project",
+    );
+    expect(p).toContain("project root: /project");
+    expect(p).toContain("exact scope: /work");
+    expect(p).toMatch(/scope relative to project root: \.\.[\\/]work/);
+    expect(p).toContain("Result, Changed, Checks, Concerns, Next");
+    expect(p).toContain("at most five bullets");
+  });
+
   it("shows (no facts yet) with an empty memory", () => {
     expect(buildSystemPrompt(rec, "", "(no facts yet)", "(no skills yet)")).toContain("Memory index (facts; use memory_read for details):\n(no facts yet)");
   });

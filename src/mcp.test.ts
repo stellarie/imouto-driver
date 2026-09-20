@@ -56,6 +56,31 @@ describe("MCP server", () => {
     expect(firstText(waited)).toBe("#1 [imo-1] hello orchestrator");
   });
 
+  it("warns when a new imouto scope overlaps an untucked scope", async () => {
+    const client = await connect(new RoutedMockLLMClient({
+      "imo-1": [{ content: "one", toolCalls: [] }],
+      "imo-2": [{ content: "two", toolCalls: [] }],
+    }));
+    mkdirSync(join(root, "src"));
+    expect(firstText(await client.callTool({
+      name: "spawn",
+      arguments: { goal: "one", brief: "b", scope: "src" },
+    }))).toBe("spawned imo-1");
+    const second = firstText(await client.callTool({
+      name: "spawn",
+      arguments: { goal: "two", brief: "b", scope: "." },
+    }));
+    expect(second).toContain("spawned imo-2");
+    expect(second).toContain("warning: scope overlaps untucked imo-1");
+  });
+
+  it("shows pending orchestrator mail before imouto rows", async () => {
+    const client = await connect(new RoutedMockLLMClient({}));
+    driver.send("orchestrator", "orchestrator", "review me");
+    const status = firstText(await client.callTool({ name: "status", arguments: {} }));
+    expect(status).toMatch(/^orchestrator mail:1/m);
+  });
+
   it("returns rule violations as MCP errors", async () => {
     const client = await connect(new RoutedMockLLMClient({}));
     const res = await client.callTool({ name: "wake", arguments: { id: "imo-9" } });

@@ -50,6 +50,7 @@ export interface RunnerHost {
   costWeights: CostWeights;
   limits: ContextLimits;
   shell: ShellInfo;
+  projectRoot: string;
   /** Global and project IMOUTO.md text, read per activation. */
   guides(): string;
   /** `git diff --stat` for a scope, or a short reason it is unavailable. */
@@ -150,7 +151,14 @@ export async function runActivation(
   episode: string,
 ): Promise<string> {
   const { events, mailbox, costWeights: w, limits } = host;
-  const system = buildSystemPrompt(rec, host.guides(), host.memory.indexText(), host.skills.indexText(), platformLine(host.shell));
+  const system = buildSystemPrompt(
+    rec,
+    host.guides(),
+    host.memory.indexText(),
+    host.skills.indexText(),
+    platformLine(host.shell),
+    host.projectRoot,
+  );
   const tools = host.registry.list().filter((t) => t.name !== "spawn" || rec.children === true);
   const ctx: ToolContext = {
     root: rec.scope,

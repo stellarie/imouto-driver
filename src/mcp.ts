@@ -101,7 +101,7 @@ export function createMcpServer(driver: Driver, info: McpInfo): McpServer {
         ...(budget !== undefined ? { budget } : {}),
         ...(children !== undefined ? { children } : {}),
       });
-      return text(`spawned ${rec.id}`);
+      return text([`spawned ${rec.id}`, ...driver.overlapWarnings(rec.id)].join("\n"));
     }),
   );
 
@@ -134,7 +134,7 @@ export function createMcpServer(driver: Driver, info: McpInfo): McpServer {
             `${s.id} ${s.name ?? "-"} ${s.state} depth:${s.depth} ${s.used}/${s.remaining} ` +
             `$${s.usd.toFixed(4)} mail:${s.mailPending} ${s.activity} ${s.goal}`,
         );
-      return text(rows.join("\n") || "(no imoutos)");
+      return text([`orchestrator mail:${driver.pendingMail()}`, ...(rows.length > 0 ? rows : ["(no imoutos)"])].join("\n"));
     }),
   );
 

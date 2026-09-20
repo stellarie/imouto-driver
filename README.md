@@ -88,10 +88,10 @@ Orchestrator tools:
 |---|---|
 | `health` | Root, model, live or mock, limits |
 | `set_root` | Point the driver at another project directory |
-| `spawn` | Start an imouto: `goal`, `brief`, optional `name`, `scope`, `budget`, `children` (default false) |
+| `spawn` | Start an imouto. The result warns when its scope overlaps another untucked imouto. |
 | `send` | Mail an imouto |
 | `wait` | Receive mail for the orchestrator (max 120 s per call; use 110 or less from Claude Code) |
-| `status` | Every imouto: state, depth, cost units used and remaining, estimated USD, pending mail, activity |
+| `status` | Show orchestrator mail first, then each imouto's state, budget, mail, and activity. |
 | `tuck` | Suspend an imouto; its state is kept |
 | `wake` | Resume a tucked imouto, with optional text and extra budget. On a pending tuck, cancels the tuck |
 | `run_gates` | Run the root's gates: `.imouto/gates.json`, else `package.json` scripts |
@@ -121,6 +121,16 @@ Every imouto's system prompt includes two optional files, after the base rules:
 Keep them short: rules every task needs. Each file is cut at 12,000 characters.
 Put long material in a skill, and name the skill in `IMOUTO.md`.
 The orchestrator's brief carries only task-specific constraints.
+
+Each activation names the project root, exact scope, relative scope, platform, and shell. The default final report uses five sections:
+
+- Result
+- Changed
+- Checks
+- Concerns
+- Next
+
+Each section permits five bullets. A stricter brief overrides this format.
 
 ## Memory
 
@@ -222,7 +232,8 @@ After a restart, every imouto loads as tucked. Wake the ones you need.
 ## Known limits
 
 - `shell` runs with `cwd` at the imouto's scope but is not jailed. Imoutos have used it to leave their scope.
-- Two imoutos can edit the same file. Give them disjoint scopes.
+- Scope overlap produces a warning. The driver does not block the spawn or lock files.
+- Search scans Markdown below the project root. Avoid broad roots such as a user home directory.
 - Child budgets are not refunded.
 - The project state directory's `events.jsonl` grows without rotation.
 - A fact or skill promoted mid-activation reaches an imouto at its next activation.

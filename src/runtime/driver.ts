@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import type { LLMClient } from "../llm/types.js";
 import { consolidate, formatReport } from "../memory/consolidate.js";
 import { defaultGlobalMemoryDir, Memory } from "../memory/memory.js";
@@ -90,6 +90,15 @@ export interface DriverApi {
 }
 
 type Trigger = "spawn" | "mail" | "wake";
+
+function containsPath(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function scopesOverlap(left: string, right: string): boolean {
+  return containsPath(left, right) || containsPath(right, left);
+}
 
 export class Driver implements DriverApi {
   readonly maxDepth: number;
@@ -239,6 +248,17 @@ export class Driver implements DriverApi {
     // A tuck request must not sit out a long wait.
     if (this.tuckFlags.has(addr)) return Promise.resolve([]);
     return this.mailbox.wait(addr, timeoutMs);
+  }
+
+  pendingMail(address = ORCHESTRATOR): number {
+    return this.mailbox.pending(address);
+  }
+
+  overlapWarnings(id: string): string[] {
+    const rec = this.get(id);
+    return [...this.records.values()]
+      .filter((other) => other.id !== id && other.state !== "tucked" && scopesOverlap(rec.scope, other.scope))
+      .map((other) => `warning: scope overlaps untucked ${other.id} (${other.scope})`);
   }
 
   status(): ImoutoStatus[] {
@@ -502,6 +522,7 @@ export class Driver implements DriverApi {
       costWeights: this.costWeights,
       limits: this.limits,
       shell: this.shell,
+      projectRoot: this.rootDir,
       diffStat: (scope) => this.diffStat(scope),
       setActivity: (id, a) => (a ? this.activity.set(id, a) : this.activity.delete(id)),
       save: (r) => this.store.save(r),
