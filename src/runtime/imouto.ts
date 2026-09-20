@@ -1,4 +1,4 @@
-import type { ChatMessage } from "../llm/types.js";
+import type { ChatMessage, ReasoningEffort } from "../llm/types.js";
 
 export type ImoutoState = "running" | "idle" | "tucked";
 
@@ -12,6 +12,8 @@ export interface ImoutoRecord {
   depth: number;
   goal: string;
   brief: string;
+  /** Thinking effort. Missing legacy values use max. */
+  effort?: ReasoningEffort;
   /** Absolute path; inside the parent's scope. */
   scope: string;
   /** Billed tokens: prompt + completion per call. */

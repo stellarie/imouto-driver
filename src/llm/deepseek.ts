@@ -5,6 +5,7 @@ import type {
   LLMClient,
   LLMResponse,
   LLMToolCall,
+  ReasoningEffort,
 } from "./types.js";
 
 type FetchImpl = typeof fetch;
@@ -27,8 +28,6 @@ interface DeepSeekCompletion {
     prompt_cache_miss_tokens?: number;
   };
 }
-
-export type ReasoningEffort = "low" | "high" | "max";
 
 export interface DeepSeekClientOptions {
   apiKey: string;
@@ -105,7 +104,7 @@ export class DeepSeekClient implements LLMClient {
     this.baseUrl = opts.baseUrl ?? "https://api.deepseek.com";
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.thinking = opts.thinking ?? true;
-    this.reasoningEffort = opts.reasoningEffort ?? "high";
+    this.reasoningEffort = opts.reasoningEffort ?? "max";
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.callTimeoutMs = opts.callTimeoutMs ?? 180_000;
   }
@@ -118,7 +117,7 @@ export class DeepSeekClient implements LLMClient {
     const body: Record<string, unknown> = {
       model: this.model,
       messages,
-      reasoning_effort: this.reasoningEffort,
+      reasoning_effort: req.reasoningEffort ?? this.reasoningEffort,
     };
     if (this.thinking) body.thinking = { type: "enabled" };
     if (req.tools && req.tools.length > 0) {

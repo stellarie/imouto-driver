@@ -1,4 +1,5 @@
 export type ChatRole = "system" | "user" | "assistant" | "tool";
+export type ReasoningEffort = "low" | "high" | "max";
 
 export type ContentPart =
   | { type: "text"; text: string }
@@ -36,6 +37,7 @@ export interface LLMResponse {
 export interface ChatRequest {
   system?: string;
   messages: ChatMessage[];
+  reasoningEffort?: ReasoningEffort;
   tools?: LLMToolSchema[];
 }
 

@@ -34,6 +34,14 @@ Environment, from the shell or a `.env` file in the repo root:
 In the repo `.env`, `DEEPSEEK_API_KEY` and `DEEPSEEK_MODEL` override the shell environment.
 Other `.env` values only fill unset variables, so an MCP client's `IMOUTO_ROOT` still wins.
 
+## Thinking effort
+
+Every DeepSeek imouto uses thinking mode. `spawn` accepts `low`, `high`, or `max` through `effort`.
+
+The default is `max`. Child imoutos can select the same three values through their `spawn` tool.
+
+DeepSeek documents these values in its [Thinking Mode guide](https://api-docs.deepseek.com/guides/thinking_mode/).
+
 ## Windows and Linux
 
 The driver runs on both. CI tests every change on `ubuntu-latest` and `windows-latest`.
@@ -86,12 +94,12 @@ Orchestrator tools:
 
 | Tool | Purpose |
 |---|---|
-| `health` | Root, model, live or mock, limits |
+| `health` | Root, model, thinking mode, effort levels, live state, and limits |
 | `set_root` | Point the driver at another project directory |
-| `spawn` | Start an imouto. The result warns when its scope overlaps another untucked imouto. |
+| `spawn` | Start an imouto with optional `low`, `high`, or `max` effort. Default `max`. |
 | `send` | Mail an imouto |
 | `wait` | Receive mail for the orchestrator (max 120 s per call; use 110 or less from Claude Code) |
-| `status` | Show orchestrator mail first, then each imouto's state, budget, mail, and activity. |
+| `status` | Show orchestrator mail first, then each imouto's state, effort, budget, mail, and activity. |
 | `tuck` | Suspend an imouto; its state is kept |
 | `wake` | Resume a tucked imouto, with optional text and extra budget. On a pending tuck, cancels the tuck |
 | `run_gates` | Run the root's gates: `.imouto/gates.json`, else `package.json` scripts |

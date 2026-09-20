@@ -1,3 +1,4 @@
+import type { ReasoningEffort } from "../llm/types.js";
 import { formatMail } from "../runtime/mailbox.js";
 import type { Tool, ToolContext, ToolResult } from "./types.js";
 
@@ -15,6 +16,12 @@ function optString(v: unknown): string | undefined {
   return typeof v === "string" && v !== "" ? v : undefined;
 }
 
+function optEffort(v: unknown): ReasoningEffort | undefined {
+  if (v === undefined) return undefined;
+  if (v === "low" || v === "high" || v === "max") return v;
+  throw new TypeError("effort must be low, high, or max");
+}
+
 export const spawnTool: Tool = {
   name: "spawn",
   description:
@@ -25,6 +32,7 @@ export const spawnTool: Tool = {
       goal: { type: "string", description: "One checkable outcome." },
       brief: { type: "string", description: "Context, constraints, and what to report." },
       name: { type: "string" },
+      effort: { type: "string", enum: ["low", "high", "max"], description: "Thinking effort. Default max." },
       scope: { type: "string", description: "Directory relative to your scope. Default '.'." },
       budget: { type: "number", description: "Cost units. Default: 25% of your remaining budget." },
       children: { type: "boolean", description: "Allow the child to spawn its own children. Default false." },
@@ -34,12 +42,14 @@ export const spawnTool: Tool = {
   async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
     try {
       const name = optString(args.name);
+      const effort = optEffort(args.effort);
       const scope = optString(args.scope);
       const budget = optNumber(args.budget);
       const rec = ctx.driver.spawnChild(ctx.imoutoId, {
         goal: String(args.goal ?? ""),
         brief: String(args.brief ?? ""),
         ...(name ? { name } : {}),
+        ...(effort ? { effort } : {}),
         ...(scope ? { scope } : {}),
         ...(budget !== undefined ? { budget } : {}),
         ...(args.children === true ? { children: true } : {}),

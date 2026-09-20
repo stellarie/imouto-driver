@@ -56,6 +56,18 @@ describe("MCP server", () => {
     expect(firstText(waited)).toBe("#1 [imo-1] hello orchestrator");
   });
 
+  it("accepts low, high, and max effort with max as the default", async () => {
+    const client = await connect(new RoutedMockLLMClient({
+      "imo-1": [{ content: "default", toolCalls: [] }],
+      "imo-2": [{ content: "high", toolCalls: [] }],
+    }));
+    await client.callTool({ name: "spawn", arguments: { goal: "one", brief: "b" } });
+    await client.callTool({ name: "spawn", arguments: { goal: "two", brief: "b", effort: "high" } });
+    expect(driver.status().map((s) => s.effort)).toEqual(["max", "high"]);
+    const invalid = await client.callTool({ name: "spawn", arguments: { goal: "x", brief: "b", effort: "ultra" } });
+    expect(invalid.isError).toBe(true);
+  });
+
   it("warns when a new imouto scope overlaps an untucked scope", async () => {
     const client = await connect(new RoutedMockLLMClient({
       "imo-1": [{ content: "one", toolCalls: [] }],

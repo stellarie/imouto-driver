@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
-import type { LLMClient } from "../llm/types.js";
+import type { LLMClient, ReasoningEffort } from "../llm/types.js";
 import { consolidate, formatReport } from "../memory/consolidate.js";
 import { defaultGlobalMemoryDir, Memory } from "../memory/memory.js";
 import type { MemoryScope } from "../memory/types.js";
@@ -58,6 +58,8 @@ export interface SpawnInput {
   goal: string;
   brief: string;
   name?: string;
+  /** Thinking effort. Default max. */
+  effort?: ReasoningEffort;
   /** Relative to the parent's scope; default ".". */
   scope?: string;
   /** Billed tokens. */
@@ -73,6 +75,7 @@ export interface ImoutoStatus {
   depth: number;
   state: ImoutoState;
   goal: string;
+  effort: ReasoningEffort;
   used: number;
   remaining: number;
   mailPending: number;
@@ -225,6 +228,7 @@ export class Driver implements DriverApi {
       depth,
       goal: input.goal,
       brief: input.brief,
+      effort: input.effort ?? "max",
       scope,
       budget: { total: budget, used: 0, granted: 0 },
       children: input.children === true,
@@ -269,6 +273,7 @@ export class Driver implements DriverApi {
       depth: r.depth,
       state: r.state,
       goal: r.goal.slice(0, 80),
+      effort: r.effort ?? "max",
       used: r.budget.used,
       remaining: remaining(r),
       mailPending: this.mailbox.pending(r.id),

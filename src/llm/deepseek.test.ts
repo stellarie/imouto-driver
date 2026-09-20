@@ -25,13 +25,20 @@ function client(f: typeof fetch) {
 }
 
 describe("DeepSeekClient", () => {
-  it("defaults to deepseek-flash with thinking enabled and high effort", async () => {
+  it("defaults to deepseek-flash with thinking enabled and max effort", async () => {
     delete process.env.DEEPSEEK_MODEL;
     const { impl, calls } = fakeFetch([ok({ content: "hi" })]);
     await client(impl).chat({ messages: [{ role: "user", content: "x" }] });
     expect(calls[0]?.body.model).toBe("deepseek-flash");
     expect(calls[0]?.body.thinking).toEqual({ type: "enabled" });
-    expect(calls[0]?.body.reasoning_effort).toBe("high");
+    expect(calls[0]?.body.reasoning_effort).toBe("max");
+  });
+
+  it.each(["low", "high", "max"] as const)("sends %s effort from each chat request", async (effort) => {
+    const { impl, calls } = fakeFetch([ok({ content: "hi" })]);
+    await client(impl).chat({ messages: [], reasoningEffort: effort });
+    expect(calls[0]?.body.reasoning_effort).toBe(effort);
+    expect(calls[0]?.body.thinking).toEqual({ type: "enabled" });
   });
 
   it("sends assistant reasoning back as reasoning_content", async () => {

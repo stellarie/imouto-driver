@@ -221,7 +221,12 @@ export async function runActivation(
     try {
       return await host.semaphore.run(() => {
         host.setActivity(rec.id, { kind: "call", since: Date.now() });
-        return host.llm.chat({ system: sys, messages, ...(withTools ? { tools } : {}) });
+        return host.llm.chat({
+          system: sys,
+          messages,
+          reasoningEffort: rec.effort ?? "max",
+          ...(withTools ? { tools } : {}),
+        });
       });
     } finally {
       host.setActivity(rec.id, undefined);

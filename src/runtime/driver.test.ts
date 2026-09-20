@@ -66,6 +66,20 @@ describe("spawn and reply", () => {
     expect(mail.map((m) => m.text)).toEqual(["done"]);
   });
 
+  it("defaults effort to max and forwards explicit effort", async () => {
+    const llm = new RoutedMockLLMClient({
+      "imo-1": [final("default")],
+      "imo-2": [final("low")],
+    });
+    const d = mk(llm);
+    d.spawn(spawnArgs());
+    d.spawn(spawnArgs({ effort: "low" }));
+    await until(() => state(d, "imo-2") === "idle");
+    expect(llm.calls["imo-1"]?.[0]?.reasoningEffort).toBe("max");
+    expect(llm.calls["imo-2"]?.[0]?.reasoningEffort).toBe("low");
+    expect(d.status().map((s) => s.effort)).toEqual(["max", "low"]);
+  });
+
   it("stores the final reply with its reasoning as the last history entry", async () => {
     const d = mk(new RoutedMockLLMClient({ "imo-1": [final("done")] }));
     d.spawn(spawnArgs());
@@ -76,14 +90,14 @@ describe("spawn and reply", () => {
 
   it("creates a child at depth + 1 through the spawn tool", async () => {
     const llm = new RoutedMockLLMClient({
-      "imo-1": [tc("spawn", spawnArgs({ budget: 50_000 })), final("parent done")],
+      "imo-1": [tc("spawn", spawnArgs({ budget: 50_000, effort: "high" })), final("parent done")],
       "imo-2": [final("child done")],
     });
     const d = mk(llm);
     d.spawn(spawnArgs({ children: true }));
     await until(() => state(d, "imo-2") === "idle");
     const child = d.status().find((s) => s.id === "imo-2");
-    expect(child).toMatchObject({ parent: "imo-1", depth: 2 });
+    expect(child).toMatchObject({ parent: "imo-1", depth: 2, effort: "high" });
     const toolMsg = llm.calls["imo-1"]?.[1]?.messages.find((m) => m.role === "tool");
     expect(toolMsg?.content).toBe("spawned imo-2");
   });
