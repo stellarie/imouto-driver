@@ -51,6 +51,35 @@ describe("buildSystemPrompt", () => {
     expect(p).toContain("at most five bullets");
   });
 
+  it("states that structured contract fields override conflicting brief text", () => {
+    const conflicting = { ...rec, children: false, brief: "Spawn two children." } as ImoutoRecord;
+    const p = buildSystemPrompt(conflicting, "", "(no facts yet)", "(no skills yet)");
+    expect(p).toContain("Structured contract fields override conflicting brief text.");
+    expect(p).toContain("You cannot spawn children. Do the work yourself.");
+  });
+
+  it("shows the structured worker contract and preloaded skills", () => {
+    const contracted = {
+      ...rec,
+      role: "architect",
+      acceptance: "A decision cites tests.",
+      requiredSkills: ["codebase-analysis"],
+    } as ImoutoRecord;
+    const p = buildSystemPrompt(
+      contracted,
+      "",
+      "(no facts yet)",
+      "(no skills yet)",
+      "",
+      "/work",
+      "## Loaded skill: verification-before-completion\nRun fresh checks.",
+    );
+    expect(p).toContain("role: architect");
+    expect(p).toContain("acceptance: A decision cites tests.");
+    expect(p).toContain("required skills: verification-before-completion, codebase-analysis");
+    expect(p).toContain("## Loaded skill: verification-before-completion");
+  });
+
   it("shows (no facts yet) with an empty memory", () => {
     expect(buildSystemPrompt(rec, "", "(no facts yet)", "(no skills yet)")).toContain("Memory index (facts; use memory_read for details):\n(no facts yet)");
   });

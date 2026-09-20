@@ -17,7 +17,7 @@ import { DEFAULT_WEIGHTS, usd, type CostWeights } from "./cost.js";
 import { defaultGlobalGuidePath, guideSection } from "./guides.js";
 import { episodeSearchBody, readEpisodes, REPLY_CHARS, writeEpisode, type Episode } from "./episodes.js";
 import { EventLog } from "./events.js";
-import { remaining, type ImoutoRecord, type ImoutoState } from "./imouto.js";
+import { remaining, type ImoutoRecord, type ImoutoRole, type ImoutoState, type ReportFormat } from "./imouto.js";
 import { Mailbox, ORCHESTRATOR, type Mail } from "./mailbox.js";
 import { COMPLETION_RESERVE, runActivation, type Activity, type ContextLimits, type RunnerHost } from "./runner.js";
 import { Semaphore } from "./semaphore.js";
@@ -58,6 +58,14 @@ export interface SpawnInput {
   goal: string;
   brief: string;
   name?: string;
+  /** Development role. Default implement. */
+  role?: ImoutoRole;
+  /** Checkable completion criteria. */
+  acceptance?: string;
+  /** Skills loaded into every activation. */
+  requiredSkills?: string[];
+  /** Optional machine-checked final report format. */
+  reportFormat?: ReportFormat;
   /** Thinking effort. Default max. */
   effort?: ReasoningEffort;
   /** Relative to the parent's scope; default ".". */
@@ -75,6 +83,7 @@ export interface ImoutoStatus {
   depth: number;
   state: ImoutoState;
   goal: string;
+  role: ImoutoRole;
   effort: ReasoningEffort;
   used: number;
   remaining: number;
@@ -210,6 +219,9 @@ export class Driver implements DriverApi {
     }
     if (!existsSync(scope) || !statSync(scope).isDirectory()) throw new Error(`scope not found: ${scope}`);
 
+    const requiredSkills = [...new Set(input.requiredSkills ?? [])];
+    for (const name of requiredSkills) this.skillStore.find(name);
+
     const budget = input.budget ?? (parent ? Math.floor(0.25 * remaining(parent)) : this.defaultRootBudget);
     if (!(budget > 0)) throw new Error("budget must be positive");
     if (parent && budget > remaining(parent)) {
@@ -228,6 +240,10 @@ export class Driver implements DriverApi {
       depth,
       goal: input.goal,
       brief: input.brief,
+      role: input.role ?? "implement",
+      ...(input.acceptance ? { acceptance: input.acceptance } : {}),
+      ...(requiredSkills.length > 0 ? { requiredSkills } : {}),
+      ...(input.reportFormat ? { reportFormat: input.reportFormat } : {}),
       effort: input.effort ?? "max",
       scope,
       budget: { total: budget, used: 0, granted: 0 },
@@ -273,6 +289,7 @@ export class Driver implements DriverApi {
       depth: r.depth,
       state: r.state,
       goal: r.goal.slice(0, 80),
+      role: r.role ?? "implement",
       effort: r.effort ?? "max",
       used: r.budget.used,
       remaining: remaining(r),

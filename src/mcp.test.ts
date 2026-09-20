@@ -62,8 +62,11 @@ describe("MCP server", () => {
       "imo-2": [{ content: "high", toolCalls: [] }],
     }));
     await client.callTool({ name: "spawn", arguments: { goal: "one", brief: "b" } });
-    await client.callTool({ name: "spawn", arguments: { goal: "two", brief: "b", effort: "high" } });
-    expect(driver.status().map((s) => s.effort)).toEqual(["max", "high"]);
+    await client.callTool({
+      name: "spawn",
+      arguments: { goal: "two", brief: "b", role: "architect", acceptance: "one decision", effort: "high" },
+    });
+    expect(driver.status().map((s) => [s.role, s.effort])).toEqual([["implement", "max"], ["architect", "high"]]);
     const invalid = await client.callTool({ name: "spawn", arguments: { goal: "x", brief: "b", effort: "ultra" } });
     expect(invalid.isError).toBe(true);
   });

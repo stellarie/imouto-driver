@@ -90,17 +90,25 @@ export function createMcpServer(driver: Driver, info: McpInfo): McpServer {
         goal: z.string(),
         brief: z.string(),
         name: z.string().optional(),
+        role: z.enum(["architect", "explore", "implement", "review", "repair", "integrate"]).optional().describe("Development role. Default implement."),
+        acceptance: z.string().optional().describe("Checkable completion criteria."),
+        requiredSkills: z.array(z.string()).optional().describe("Skills preloaded into every activation."),
+        reportFormat: z.enum(["concise"]).optional().describe("Machine-check the five-section final report."),
         effort: z.enum(["low", "high", "max"]).optional().describe("Thinking effort. Default max."),
         scope: z.string().optional().describe("Directory relative to the root. Default '.'."),
         budget: z.number().optional().describe("Cost units (miss-token equivalents). Default 4,000,000."),
         children: z.boolean().optional().describe("Allow this imouto to spawn children. Default false."),
       },
     },
-    guard(({ goal, brief, name, effort, scope, budget, children }) => {
+    guard(({ goal, brief, name, role, acceptance, requiredSkills, reportFormat, effort, scope, budget, children }) => {
       const rec = driver.spawn({
         goal,
         brief,
         ...(name ? { name } : {}),
+        ...(role ? { role } : {}),
+        ...(acceptance ? { acceptance } : {}),
+        ...(requiredSkills ? { requiredSkills } : {}),
+        ...(reportFormat ? { reportFormat } : {}),
         ...(effort ? { effort } : {}),
         ...(scope ? { scope } : {}),
         ...(budget !== undefined ? { budget } : {}),
@@ -136,7 +144,7 @@ export function createMcpServer(driver: Driver, info: McpInfo): McpServer {
         .status()
         .map(
           (s) =>
-            `${s.id} ${s.name ?? "-"} ${s.state} depth:${s.depth} effort:${s.effort} ${s.used}/${s.remaining} ` +
+            `${s.id} ${s.name ?? "-"} ${s.state} depth:${s.depth} role:${s.role} effort:${s.effort} ${s.used}/${s.remaining} ` +
             `$${s.usd.toFixed(4)} mail:${s.mailPending} ${s.activity} ${s.goal}`,
         );
       return text([`orchestrator mail:${driver.pendingMail()}`, ...(rows.length > 0 ? rows : ["(no imoutos)"])].join("\n"));

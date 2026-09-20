@@ -43,7 +43,8 @@ export interface DeepSeekClientOptions {
 }
 
 /** Backoff before retry 1 and retry 2. */
-const RETRY_DELAYS_MS = [2_000, 8_000];
+const NETWORK_RETRY_DELAYS_MS = [2_000, 8_000];
+const SERVER_RETRY_DELAYS_MS = [2_000, 8_000, 20_000, 60_000];
 
 function toApiContent(content: string | ContentPart[]): unknown {
   if (typeof content === "string") return content;
@@ -129,7 +130,6 @@ export class DeepSeekClient implements LLMClient {
     const payload = JSON.stringify(body);
 
     for (let attempt = 0; ; attempt++) {
-      const delay = RETRY_DELAYS_MS[attempt];
       let res: Response;
       try {
         res = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
@@ -140,12 +140,14 @@ export class DeepSeekClient implements LLMClient {
         });
       } catch (e) {
         // Network failure (connect timeout, reset).
+        const delay = NETWORK_RETRY_DELAYS_MS[attempt];
         if (delay === undefined) throw e;
         await this.sleep(delay);
         continue;
       }
       if (!res.ok) {
         const text = await res.text();
+        const delay = SERVER_RETRY_DELAYS_MS[attempt];
         if (retryable(res.status) && delay !== undefined) {
           await this.sleep(delay);
           continue;

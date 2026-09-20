@@ -84,7 +84,7 @@ describe("DeepSeekClient", () => {
     ]);
   });
 
-  it("retries 429, 5xx, and network errors up to 2 times", async () => {
+  it("retries 429 and 5xx four times, and network errors twice", async () => {
     const a = fakeFetch([{ status: 429 }, { status: 503 }, ok({ content: "ok" })]);
     expect((await client(a.impl).chat({ messages: [] })).content).toBe("ok");
     expect(a.calls).toHaveLength(3);
@@ -92,9 +92,15 @@ describe("DeepSeekClient", () => {
     const b = fakeFetch([new TypeError("fetch failed"), ok({ content: "ok" })]);
     expect((await client(b.impl).chat({ messages: [] })).content).toBe("ok");
 
-    const c = fakeFetch([{ status: 500 }, { status: 500 }, { status: 500 }]);
+    const c = fakeFetch([
+      { status: 500 },
+      { status: 500 },
+      { status: 500 },
+      { status: 500 },
+      { status: 500 },
+    ]);
     await expect(client(c.impl).chat({ messages: [] })).rejects.toThrow("DeepSeek API 500");
-    expect(c.calls).toHaveLength(3);
+    expect(c.calls).toHaveLength(5);
   });
 
   it("does not retry 400", async () => {

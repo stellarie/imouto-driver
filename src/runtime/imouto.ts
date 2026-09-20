@@ -1,6 +1,8 @@
 import type { ChatMessage, ReasoningEffort } from "../llm/types.js";
 
 export type ImoutoState = "running" | "idle" | "tucked";
+export type ImoutoRole = "architect" | "explore" | "implement" | "review" | "repair" | "integrate";
+export type ReportFormat = "concise";
 
 export interface ImoutoRecord {
   /** "imo-<n>", monotonic per state dir. */
@@ -12,6 +14,14 @@ export interface ImoutoRecord {
   depth: number;
   goal: string;
   brief: string;
+  /** Assigned development role. Missing legacy values use implement. */
+  role?: ImoutoRole;
+  /** Checkable completion criteria. */
+  acceptance?: string;
+  /** Skills preloaded into each activation. */
+  requiredSkills?: string[];
+  /** Optional machine-checked final report format. */
+  reportFormat?: ReportFormat;
   /** Thinking effort. Missing legacy values use max. */
   effort?: ReasoningEffort;
   /** Absolute path; inside the parent's scope. */

@@ -23,6 +23,11 @@ export const COMPLETION_RESERVE = 4_000;
 const WRAP_UP =
   "[driver] 90% of your budget or turn limit is spent. Stop new work. Send your final report now: " +
   "what is done, what is not, files changed, how you verified.";
+const BUILTIN_VERIFICATION = `## Loaded skill: verification-before-completion
+No completion claim without fresh evidence from this activation.
+Run the complete proving command, read its exit status, and compare it with the claim.
+Treat agent reports as claims. Inspect the artifact or diff before accepting them.
+Report failed, skipped, and unavailable checks exactly.`;
 const COMPACT_SYSTEM =
   "You compress an agent's work log. Write a handoff summary of the work so far: goal, what is done " +
   "with evidence (files, line numbers, command results), open questions, files touched, and the next step. " +
@@ -143,6 +148,37 @@ function transcript(messages: ChatMessage[]): string {
  * Guards context size and budget before every call. Leaves the record in its
  * final state and saved. Returns the finish reason.
  */
+const REPORT_HEADINGS = ["Result", "Changed", "Checks", "Concerns", "Next"] as const;
+const REPORT_REPAIR = "[driver] Rewrite the final report with exactly these Markdown headings: ## Result, ## Changed, ## Checks, ## Concerns, ## Next. Use at most five bullets under each heading. Do not add other sections.";
+
+export function validConciseReport(text: string): boolean {
+  const lines = text.trim().split(/\r?\n/);
+  const headings = lines
+    .map((line, index) => line.startsWith("## ") ? { line, index } : undefined)
+    .filter((row): row is { line: string; index: number } => row !== undefined);
+  if (headings.map((row) => row.line).join("|") !== REPORT_HEADINGS.map((heading) => `## ${heading}`).join("|")) return false;
+  return headings.every((row, index) => {
+    const end = headings[index + 1]?.index ?? lines.length;
+    return lines.slice(row.index + 1, end).filter((line) => /^\s*[-*] /.test(line)).length <= 5;
+  });
+}
+
+function requiredSkillText(skills: Skills, names: string[]): string {
+  const blocks: string[] = [];
+  try {
+    const verification = skills.find("verification-before-completion");
+    blocks.push(`## Loaded skill: ${verification.name}\n${verification.body}`);
+  } catch {
+    blocks.push(BUILTIN_VERIFICATION);
+  }
+  for (const name of [...new Set(names)]) {
+    if (name === "verification-before-completion") continue;
+    const skill = skills.find(name);
+    blocks.push(`## Loaded skill: ${skill.name}\n${skill.body}`);
+  }
+  return blocks.join("\n\n");
+}
+
 export async function runActivation(
   host: RunnerHost,
   rec: ImoutoRecord,
@@ -158,6 +194,7 @@ export async function runActivation(
     host.skills.indexText(),
     platformLine(host.shell),
     host.projectRoot,
+    requiredSkillText(host.skills, rec.requiredSkills ?? []),
   );
   const tools = host.registry.list().filter((t) => t.name !== "spawn" || rec.children === true);
   const ctx: ToolContext = {
@@ -175,6 +212,7 @@ export async function runActivation(
   let lastText = "";
   let lastReasoning = "";
   let wrapUpSent = false;
+  let reportRepairSent = false;
   // Characters added since the last call; the base is rec.contextTokens.
   let pendingChars = 0;
 
@@ -328,8 +366,17 @@ export async function runActivation(
 
     if (res.toolCalls.length === 0) {
       const text = res.content.trim() ? res.content : lastText.trim() ? lastText : summarize(rec.id, i, counts);
-      tellParent(text);
-      events.emit(rec.id, "reply", { to: rec.parent, text });
+      if (rec.reportFormat === "concise" && !validConciseReport(text) && !reportRepairSent) {
+        push({ role: "user", content: REPORT_REPAIR });
+        reportRepairSent = true;
+        events.emit(rec.id, "content", { text: REPORT_REPAIR });
+        continue;
+      }
+      const reply = rec.reportFormat === "concise" && !validConciseReport(text)
+        ? `[invalid concise report after one repair]\n${text}`
+        : text;
+      tellParent(reply);
+      events.emit(rec.id, "reply", { to: rec.parent, text: reply });
       return finish("replied");
     }
     if (res.content.trim()) events.emit(rec.id, "content", { text: res.content });

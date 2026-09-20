@@ -3,8 +3,8 @@
 A minimal MCP server that runs DeepSeek worker agents ("imoutos").
 Any MCP client can drive it: Claude Code, Codex, or another agent.
 
-The driver has no built-in process, no predefined roles, and no output contracts.
-The orchestrator gives each imouto a goal and a brief at spawn time.
+The driver provides structured worker roles, acceptance, required skills, scope, and concise reports.
+The orchestrator supplies the task contract at spawn time. Structured fields override conflicting brief text.
 Imoutos use tools, spawn child imoutos, exchange mail, remember findings, and use skills.
 The orchestrator can tuck an imouto in (suspend it, state kept) and wake it later.
 
@@ -39,6 +39,14 @@ Other `.env` values only fill unset variables, so an MCP client's `IMOUTO_ROOT` 
 Every DeepSeek imouto uses thinking mode. `spawn` accepts `low`, `high`, or `max` through `effort`.
 
 The default is `max`. Child imoutos can select the same three values through their `spawn` tool.
+
+`spawn` also accepts `role`, `acceptance`, `requiredSkills`, and `reportFormat`. The driver preloads required skill bodies into every activation.
+
+Set `reportFormat` to `concise` to enforce the five-section report. The driver requests one repair before returning an invalid report.
+
+Every activation preloads `verification-before-completion`. A built-in verification contract covers installations without that skill.
+
+Explicit unknown skills fail before the driver creates a worker record.
 
 DeepSeek documents these values in its [Thinking Mode guide](https://api-docs.deepseek.com/guides/thinking_mode/).
 
@@ -96,7 +104,7 @@ Orchestrator tools:
 |---|---|
 | `health` | Root, model, thinking mode, effort levels, live state, and limits |
 | `set_root` | Point the driver at another project directory |
-| `spawn` | Start an imouto with optional `low`, `high`, or `max` effort. Default `max`. |
+| `spawn` | Start a worker with role, acceptance, required skills, scope, budget, and effort. |
 | `send` | Mail an imouto |
 | `wait` | Receive mail for the orchestrator (max 120 s per call; use 110 or less from Claude Code) |
 | `status` | Show orchestrator mail first, then each imouto's state, effort, budget, mail, and activity. |
@@ -180,6 +188,8 @@ Budgets are in cost units. One cost unit is one cache-miss prompt token.
 A cache hit costs 0.02 units and an output token 4 units, following deepseek-flash prices.
 1,000,000 units is about $0.15 off-peak. `status` shows the estimate in USD.
 Resent history is mostly cache hits, so it costs little.
+
+The DeepSeek client retries rate limits and server errors four times, after 2, 8, 20, and 60 seconds. It retries network failures twice.
 
 Before every model call, the driver:
 

@@ -1,4 +1,5 @@
 import type { ReasoningEffort } from "../llm/types.js";
+import type { ImoutoRole } from "../runtime/imouto.js";
 import { formatMail } from "../runtime/mailbox.js";
 import type { Tool, ToolContext, ToolResult } from "./types.js";
 
@@ -14,6 +15,24 @@ function optNumber(v: unknown): number | undefined {
 
 function optString(v: unknown): string | undefined {
   return typeof v === "string" && v !== "" ? v : undefined;
+}
+
+function optRole(v: unknown): ImoutoRole | undefined {
+  if (v === undefined) return undefined;
+  if (v === "architect" || v === "explore" || v === "implement" || v === "review" || v === "repair" || v === "integrate") return v;
+  throw new TypeError("invalid role");
+}
+
+function optStrings(v: unknown): string[] | undefined {
+  if (v === undefined) return undefined;
+  if (!Array.isArray(v) || v.some((item) => typeof item !== "string")) throw new TypeError("requiredSkills must be strings");
+  return v;
+}
+
+function optReportFormat(v: unknown): "concise" | undefined {
+  if (v === undefined) return undefined;
+  if (v === "concise") return v;
+  throw new TypeError("reportFormat must be concise");
 }
 
 function optEffort(v: unknown): ReasoningEffort | undefined {
@@ -32,6 +51,10 @@ export const spawnTool: Tool = {
       goal: { type: "string", description: "One checkable outcome." },
       brief: { type: "string", description: "Context, constraints, and what to report." },
       name: { type: "string" },
+      role: { type: "string", enum: ["architect", "explore", "implement", "review", "repair", "integrate"], description: "Development role. Default implement." },
+      acceptance: { type: "string", description: "Checkable completion criteria." },
+      requiredSkills: { type: "array", items: { type: "string" }, description: "Skills preloaded into every activation." },
+      reportFormat: { type: "string", enum: ["concise"], description: "Machine-check the five-section final report." },
       effort: { type: "string", enum: ["low", "high", "max"], description: "Thinking effort. Default max." },
       scope: { type: "string", description: "Directory relative to your scope. Default '.'." },
       budget: { type: "number", description: "Cost units. Default: 25% of your remaining budget." },
@@ -42,6 +65,10 @@ export const spawnTool: Tool = {
   async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
     try {
       const name = optString(args.name);
+      const role = optRole(args.role);
+      const acceptance = optString(args.acceptance);
+      const requiredSkills = optStrings(args.requiredSkills);
+      const reportFormat = optReportFormat(args.reportFormat);
       const effort = optEffort(args.effort);
       const scope = optString(args.scope);
       const budget = optNumber(args.budget);
@@ -49,6 +76,10 @@ export const spawnTool: Tool = {
         goal: String(args.goal ?? ""),
         brief: String(args.brief ?? ""),
         ...(name ? { name } : {}),
+        ...(role ? { role } : {}),
+        ...(acceptance ? { acceptance } : {}),
+        ...(requiredSkills ? { requiredSkills } : {}),
+        ...(reportFormat ? { reportFormat } : {}),
         ...(effort ? { effort } : {}),
         ...(scope ? { scope } : {}),
         ...(budget !== undefined ? { budget } : {}),

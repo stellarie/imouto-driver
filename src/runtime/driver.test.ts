@@ -80,6 +80,39 @@ describe("spawn and reply", () => {
     expect(d.status().map((s) => s.effort)).toEqual(["max", "low"]);
   });
 
+  it("forwards structured contracts and built-in verification guidance", async () => {
+    const llm = new RoutedMockLLMClient({ "imo-1": [final("done")] });
+    const d = mk(llm);
+    d.spawn(spawnArgs({ role: "architect", acceptance: "Citations and tests support one decision." }));
+    await until(() => state(d, "imo-1") === "idle");
+    const system = llm.calls["imo-1"]?.[0]?.system ?? "";
+    expect(system).toContain("role: architect");
+    expect(system).toContain("acceptance: Citations and tests support one decision.");
+    expect(system).toContain("Loaded skill: verification-before-completion");
+    expect(d.status()[0]).toMatchObject({ role: "architect" });
+  });
+
+  it("preloads the installed verification skill when available", async () => {
+    const skillDir = join(root, "global-skills", "verification-before-completion");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: verification-before-completion\ndescription: Verify first\n---\n\nFULL VERIFICATION BODY\n");
+    const llm = new RoutedMockLLMClient({ "imo-1": [final("done")] });
+    const d = mk(llm);
+    d.spawn(spawnArgs());
+    await until(() => state(d, "imo-1") === "idle");
+    expect(llm.calls["imo-1"]?.[0]?.system).toContain("FULL VERIFICATION BODY");
+  });
+
+  it("repairs one invalid concise report before replying", async () => {
+    const valid = "## Result\n- done\n\n## Changed\n- none\n\n## Checks\n- inspected\n\n## Concerns\n- none\n\n## Next\n- parent review";
+    const llm = new RoutedMockLLMClient({ "imo-1": [final("not structured"), final(valid)] });
+    const d = mk(llm);
+    d.spawn(spawnArgs({ reportFormat: "concise" }));
+    const mail = await d.wait("orchestrator", 2_000);
+    expect(mail[0]?.text).toBe(valid);
+    expect(lastUser(llm.calls["imo-1"]?.[1]?.messages ?? [])).toContain("Rewrite the final report");
+  });
+
   it("stores the final reply with its reasoning as the last history entry", async () => {
     const d = mk(new RoutedMockLLMClient({ "imo-1": [final("done")] }));
     d.spawn(spawnArgs());
@@ -132,6 +165,12 @@ describe("spawn rules", () => {
   it("rejects a child scope outside the parent scope", async () => {
     const { text } = await spawnError({ scope: "../.." });
     expect(text).toContain("scope escapes parent scope");
+  });
+
+  it("rejects unknown required skills before creating a record", () => {
+    const d = mk(new RoutedMockLLMClient({}));
+    expect(() => d.spawn(spawnArgs({ requiredSkills: ["missing-skill"] }))).toThrow("unknown skill: missing-skill");
+    expect(d.status()).toEqual([]);
   });
 
   it("adds a child budget to the parent's granted total", async () => {

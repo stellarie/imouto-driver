@@ -4,6 +4,7 @@ import type { ImoutoRecord } from "./imouto.js";
 // Static text first so the prompt prefix stays cacheable.
 const BASE = `You are one agent in a team. Your parent gave you the goal and brief below.
 Use tools to do the work. Read before you write.
+Structured contract fields override conflicting brief text.
 Your final reply without tool calls goes to your parent. Make it complete and self-contained.
 Use spawn only for independent sub-work. Give each child a clear goal and a budget.
 Use send and wait to ask your parent or peers for missing facts. Do not guess.
@@ -21,12 +22,14 @@ export function buildSystemPrompt(
   skillIndex: string,
   platform = "",
   projectRoot = rec.scope,
+  loadedSkills = "",
 ): string {
   return [
     BASE,
     ...(platform ? [platform] : []),
     "",
     ...(guides ? [guides, ""] : []),
+    ...(loadedSkills ? ["Preloaded required skills:", loadedSkills, ""] : []),
     "Memory index (facts; use memory_read for details):",
     memoryIndex,
     "",
@@ -35,8 +38,11 @@ export function buildSystemPrompt(
     "",
     `id: ${rec.id}`,
     `parent: ${rec.parent}`,
+    `role: ${rec.role ?? "implement"}`,
     `goal: ${rec.goal}`,
+    `acceptance: ${rec.acceptance ?? "Derive checkable acceptance before implementation."}`,
     `brief: ${rec.brief}`,
+    `required skills: ${["verification-before-completion", ...(rec.requiredSkills ?? [])].join(", ")}`,
     `project root: ${projectRoot}`,
     `exact scope: ${rec.scope}`,
     `scope relative to project root: ${relative(projectRoot, rec.scope) || "."}`,
